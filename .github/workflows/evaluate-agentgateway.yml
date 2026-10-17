@@ -1,0 +1,39 @@
+name: Evaluate agentgateway v1.6.0 independently of VPS
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/evaluate-agentgateway.yml"
+      - "experiments/gateway_eval/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local-agentgateway:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the same MCP v2 SDK as the current public project
+        run: python -m pip install --disable-pip-version-check -r requirements-shared.txt
+      - name: Download and verify exact official agentgateway v1.6.0 binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/agentgateway/agentgateway/releases/download/v1.6.0/agentgateway-linux-amd64 \
+            --output "$RUNNER_TEMP/agentgateway"
+          echo "496ed27e6a96b55a9ad7cabe5c2be7172511f44a3cb113e533d22bf93a7f079d  $RUNNER_TEMP/agentgateway" | sha256sum -c -
+          chmod 700 "$RUNNER_TEMP/agentgateway"
+      - name: Run only local synthetic MCP + scoped JWT/hot-policy probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m experiments.gateway_eval.smoke "$RUNNER_TEMP/agentgateway"
