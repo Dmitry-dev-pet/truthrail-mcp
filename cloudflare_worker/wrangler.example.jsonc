@@ -1,0 +1,18 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "my-private-mcp",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-16",
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "GITHUB_CLIENT_ID": "REPLACE_WITH_YOUR_PUBLIC_OAUTH_CLIENT_ID",
+    "OWNER_GITHUB_ID": "123456789"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "REPLACE_WITH_YOUR_PRIVATE_KV_NAMESPACE_ID"
+    }
+  ]
+}
