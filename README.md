@@ -11,7 +11,7 @@ An open-source, vendor-neutral collection of MCP tool-plane adapters for **Truth
 | Package | Purpose | Status |
 | --- | --- | --- |
 | `shared_alfred_gateway/` | Narrow Python MCP adapter for the five Historical Atlas tool schemas and a disabled-by-default captions candidate | Source tests; not deployed from this public repo |
-| `cloudflare_worker/` | Optional OAuth-protected MCP entrypoint with a default-deny backend catalog | Source tests; real owner-specific configuration is deliberately omitted |
+| `cloudflare_worker/` | Optional OAuth entrypoint plus a separate opt-in Bearer client edge, using one bounded MCP handler | Source tests; real owner-specific configuration is deliberately omitted |
 | `experiments/fastmcp4/` | FastMCP 4.1.0 in-process five-tool proxy comparison | Synthetic smoke only |
 | `tests/` | Schema, denial, output and provenance fixtures | No live data |
 
@@ -31,6 +31,8 @@ ChatGPT / another authorized MCP client
 ```
 
 The transport for ChatGPT may differ from the authentication used by other clients. Backend tool registration is deny-by-default and must be reviewed with the backend owner. Credentials must remain in the owning service. Ordinary tool calls do not require one GitHub Issue/Action per request.
+
+The [minimal Cloudflare client guide](docs/CLOUDFLARE_BEARER_CLIENT.md) describes the separately disabled Bearer entrypoint, client-scoped hash registry, required private VPC Service binding and a standalone HTTPS test client. This is tested source, not an active external client connection.
 
 ## Run source checks
 
@@ -68,3 +70,4 @@ No source here authorizes access to an individual's Mac, VPS, Atlas dataset, Tel
 ## License
 
 MIT (see [LICENSE](LICENSE)). Third-party packages retain their own licenses. Contributions must use sanitized fixtures and cannot broaden runtime privileges by changing only docs or examples.
+

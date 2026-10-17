@@ -1,0 +1,16 @@
+{
+  "name": "example-mcp-client-edge",
+  "main": "src/bearer.js",
+  "compatibility_date": "2026-10-17",
+  "workers_dev": false,
+  "vars": {
+    "ENABLE_BEARER_INGRESS": "0",
+    "ENABLE_ATLAS_BACKEND": "0",
+    "MCP_AUDIENCE": "https://mcp.example.invalid/mcp"
+  },
+  "ratelimits": [{
+    "name": "CLIENT_RATE_LIMITER",
+    "namespace_id": "1001",
+    "simple": { "limit": 60, "period": 60 }
+  }]
+}
