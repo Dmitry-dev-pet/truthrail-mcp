@@ -11,8 +11,6 @@ import json
 import os
 import re
 import secrets
-import urllib.error
-import urllib.request
 from urllib.parse import urlsplit
 
 TOOLS = {"dataset_info", "search_rulers", "get_timeline", "compare_rulers", "get_evidence"}
@@ -22,11 +20,6 @@ PROTOCOL = "2025-11-25"
 
 class ProbeError(Exception):
     pass
-
-
-class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
 
 
 def endpoint_url(value):
@@ -39,29 +32,41 @@ def endpoint_url(value):
 
 
 def post(endpoint, token, message):
+    """One bounded HTTPS MCP POST via standard Python MCP v2's HTTP transport.
+
+    No redirects, retries, environment proxy, spoofed User-Agent, or response leak.
+    Lazy import keeps the trusted source-integrity check dependency-free.
+    """
+    endpoint_url(endpoint)
+    try:
+        import httpx2
+    except ImportError:
+        raise ProbeError("client-dependency-unavailable") from None
+
     headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream",
                "MCP-Protocol-Version": PROTOCOL}
     if token:
         headers["Authorization"] = "Bearer " + token
-    request = urllib.request.Request(endpoint, data=json.dumps(message).encode(), headers=headers, method="POST")
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
     try:
-        with opener.open(request, timeout=15) as response:
-            content = response.read(MAX_RESPONSE + 1)
-            if len(content) > MAX_RESPONSE:
-                raise ProbeError("response-too-large")
-            if not content:
-                return response.status, None
-            if "application/json" not in response.headers.get("Content-Type", ""):
-                raise ProbeError("expected-json-response")
-            return response.status, json.loads(content)
-    except urllib.error.HTTPError as error:
-        status = error.code
-        error.close()
-        return status, None
-    except (OSError, ValueError):
+        with httpx2.Client(timeout=15.0, follow_redirects=False, trust_env=False) as transport:
+            with transport.stream("POST", endpoint, headers=headers,
+                                  content=json.dumps(message, separators=(",", ":")).encode()) as response:
+                status = response.status_code
+                if status != 200:
+                    # Includes 202 notifications, 401 denials, redirects and all errors.
+                    return status, None
+                payload = bytearray()
+                for chunk in response.iter_bytes():
+                    if len(payload) + len(chunk) > MAX_RESPONSE:
+                        raise ProbeError("response-too-large")
+                    payload.extend(chunk)
+                if not payload:
+                    return status, None
+                if "application/json" not in response.headers.get("Content-Type", "").lower():
+                    raise ProbeError("expected-json-response")
+                return status, json.loads(payload)
+    except (httpx2.HTTPError, OSError, ValueError):
         raise ProbeError("https-request-failed") from None
-
 
 def rpc(endpoint, token, identifier, method, params=None):
     message = {"jsonrpc": "2.0", "id": identifier, "method": method}
