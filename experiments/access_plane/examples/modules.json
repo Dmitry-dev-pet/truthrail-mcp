@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "modules": [
+    {
+      "name": "peer_chat",
+      "version": "1",
+      "adapter": "builtin:peer_chat"
+    }
+  ]
+}

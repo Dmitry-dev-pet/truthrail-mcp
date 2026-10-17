@@ -29,6 +29,14 @@ class AccessPlane:
         self.delegates = dict(delegates or {})
         self.clock = clock
 
+    def _policy(self) -> TrustedPolicy:
+        # A trusted loader may refresh a separately secured policy snapshot
+        # without allowing a capability module to assign its own scopes.
+        obj = self.policy() if callable(self.policy) else self.policy
+        if not isinstance(obj, TrustedPolicy):
+            raise Denied("invalid-policy")
+        return obj
+
     def _caller(self, principal: Principal, scope: str = "capabilities:list") -> None:
         if not isinstance(principal, Principal) or not principal.allows(
             scope, None, self.clock()
@@ -39,9 +47,10 @@ class AccessPlane:
         self._caller(principal)
         version, modules = self.registry.snapshot()
         visible = []
+        policy = self._policy()
         for name, module in sorted(modules.items()):
             actions = sorted({
-                action for (cname, action), rule in self.policy.rules.items()
+                action for (cname, action), rule in policy.rules.items()
                 if cname == name and rule.adapter == module.adapter
                 and not rule.requires_operator_approval
                 and principal.allows(rule.scope, None, self.clock())
@@ -51,14 +60,20 @@ class AccessPlane:
         return {"revision": version, "capabilities": visible}
 
     async def invoke(self, principal: Principal, capability: str, action: str,
-                     effect: str, parameters: dict) -> dict:
-        if type(parameters) is not dict or len(json.dumps(parameters, ensure_ascii=False).encode("utf-8")) > 8192:
+                     effect: str, parameters: dict,
+                     renew: Callable[[], Principal] | None = None) -> dict:
+        try:
+            valid = (type(parameters) is dict
+                     and len(json.dumps(parameters, ensure_ascii=False).encode("utf-8")) <= 8192)
+        except (ValueError, TypeError, OverflowError):
+            valid = False
+        if not valid:
             raise Denied("invalid-arguments")
         module = self.registry.require(capability)
         resource = parameters.get("room_id")
         if resource is not None and type(resource) is not str:
             raise Denied("invalid-resource")
-        self.policy.check(principal, module, action, effect, resource)
+        self._policy().check(principal, module, action, effect, resource)
         if module.adapter == "builtin:peer_chat":
             try:
                 if effect == "write" and action == "create":
@@ -96,7 +111,8 @@ class AccessPlane:
                         parameters["after_id"], parameters.get("wait_seconds", 15)
                     )
                     # Caller can be revoked/expire while the tool is blocked.
-                    self.policy.check(principal, module, action, effect, resource)
+                    self._policy().check(renew() if renew is not None else principal,
+                                         module, action, effect, resource)
                     return answer
                 raise Denied("unknown-action")
             except (ValueError, TypeError, KeyError) as exc:
@@ -109,9 +125,17 @@ class AccessPlane:
                 raise Denied("delegate-unavailable")
             # The authorized delegate is injected by a trusted host, not a
             # module path or an Internet URL from untrusted client input.
-            response = await handler(action, parameters)
-            if type(response) is not dict or len(json.dumps(response, ensure_ascii=False)) > 16384:
+            try:
+                response = await asyncio.wait_for(handler(action, parameters), timeout=15)
+                valid_response = (
+                    type(response) is dict
+                    and len(json.dumps(response, ensure_ascii=False).encode("utf-8")) <= 16384
+                )
+            except Exception as exc:
+                raise Denied("delegate-unavailable") from exc
+            if not valid_response:
                 raise Denied("invalid-delegate-response")
-            self.policy.check(principal, module, action, effect, resource)
+            self._policy().check(renew() if renew is not None else principal,
+                                 module, action, effect, resource)
             return response
         raise Denied("unknown-adapter")

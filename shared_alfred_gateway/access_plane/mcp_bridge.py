@@ -25,7 +25,7 @@ def register_access_tools(server, plane: AccessPlane,
     async def capabilities_read(capability: str, action: str, parameters: dict) -> dict:
         """Invoke a read action with server-side scope/resource policy."""
         try:
-            return await plane.invoke(trusted_principal(), capability, action, "read", parameters)
+            return await plane.invoke(trusted_principal(), capability, action, "read", parameters, renew=trusted_principal)
         except Denied as exc:
             return {"available": False, "reason": str(exc)}
 
@@ -33,7 +33,7 @@ def register_access_tools(server, plane: AccessPlane,
     async def capabilities_write(capability: str, action: str, parameters: dict) -> dict:
         """Invoke a write action; can require native ChatGPT user approval."""
         try:
-            return await plane.invoke(trusted_principal(), capability, action, "write", parameters)
+            return await plane.invoke(trusted_principal(), capability, action, "write", parameters, renew=trusted_principal)
         except Denied as exc:
             return {"available": False, "reason": str(exc)}
 
@@ -41,6 +41,6 @@ def register_access_tools(server, plane: AccessPlane,
     async def capabilities_wait(capability: str, action: str, parameters: dict) -> dict:
         """Wait at most 20s for a scoped peer message via server-side policy."""
         try:
-            return await plane.invoke(trusted_principal(), capability, action, "wait", parameters)
+            return await plane.invoke(trusted_principal(), capability, action, "wait", parameters, renew=trusted_principal)
         except Denied as exc:
             return {"available": False, "reason": str(exc)}

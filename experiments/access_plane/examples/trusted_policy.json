@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "rules": [
+    {"capability":"peer_chat","action":"create","scope":"chat:room:create","effect":"write","adapter":"builtin:peer_chat","operator_gate":false},
+    {"capability":"peer_chat","action":"join","scope":"chat:room:join","effect":"write","adapter":"builtin:peer_chat","operator_gate":false},
+    {"capability":"peer_chat","action":"send","scope":"chat:room:send","effect":"write","adapter":"builtin:peer_chat","operator_gate":false},
+    {"capability":"peer_chat","action":"next","scope":"chat:room:wait","effect":"wait","adapter":"builtin:peer_chat","operator_gate":false},
+    {"capability":"peer_chat","action":"status","scope":"chat:room:read","effect":"read","adapter":"builtin:peer_chat","operator_gate":false},
+    {"capability":"peer_chat","action":"close","scope":"chat:room:close","effect":"write","adapter":"builtin:peer_chat","operator_gate":false}
+  ]
+}

@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 import re
 
-from .identity import Denied, Principal
+from .identity import Denied, Principal, SCOPES
 
 SHA = re.compile(r"[a-f0-9]{64}\Z")
 CAP = re.compile(r"[a-z][a-z0-9_]{1,39}\Z")
@@ -63,7 +63,9 @@ class TrustedPolicy:
         for (name, action), rule in self.rules.items():
             if not (CAP.fullmatch(name) and CAP.fullmatch(action)
                     and rule.effect in {"read", "write", "wait"}
-                    and ADAPTER.fullmatch(rule.adapter)):
+                    and ADAPTER.fullmatch(rule.adapter)
+                    and rule.scope in SCOPES):
+
                 raise ValueError("invalid-trusted-policy")
 
     def check(self, principal: Principal, module: Module, action: str,
