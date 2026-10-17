@@ -162,4 +162,5 @@ jobs:
         env:
           ALFRED_PINNED_ATLAS_ROOT: ${{ github.workspace }}/.pinned-atlas
           ALFRED_PINNED_ATLAS_DB: ${{ runner.temp }}/atlas-snapshot/atlas.sqlite
+          ALFRED_REQUIRE_PINNED_ATLAS: '1'
         run: python -m unittest discover -s tests -p 'test_pinned_atlas_source_parity.py' -v
