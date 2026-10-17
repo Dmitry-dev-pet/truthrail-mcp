@@ -1,0 +1,57 @@
+name: Test public MCP source
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  python-adapter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install public SDK dependency
+        run: python -m pip install --disable-pip-version-check -r requirements-shared.txt
+      - name: Run synthetic Python tests
+        run: python -m unittest discover -s tests -v
+
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install Worker dependencies without deploy credentials
+        working-directory: cloudflare_worker
+        run: npm install --no-audit --no-fund
+      - name: Run Worker source tests and syntax check
+        working-directory: cloudflare_worker
+        run: npm test && npm run check
+
+  fastmcp-synthetic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install experimental SDK
+        run: python -m pip install --disable-pip-version-check 'fastmcp==4.1.0'
+      - name: Run wholly synthetic proxy smoke
+        run: python experiments/fastmcp4/smoke.py

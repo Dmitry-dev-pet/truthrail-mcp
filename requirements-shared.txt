@@ -1,0 +1,2 @@
+# Source-only shared Alfred MCP candidate (NOT used by active R0Wi gateway).
+mcp==2.3.0

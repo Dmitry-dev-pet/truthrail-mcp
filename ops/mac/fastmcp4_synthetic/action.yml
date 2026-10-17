@@ -1,0 +1,49 @@
+name: Alfred FastMCP4 Synthetic Mac Smoke
+description: Fixed five-tool synthetic proxy parity and Mac RSS; no network MCP backends, credentials, services or model calls.
+outputs:
+  result:
+    description: Bounded metadata-only acceptance receipt; synthetic, NOT real Atlas parity.
+    value: ${{ steps.smoke.outputs.result }}
+runs:
+  using: composite
+  steps:
+    - id: smoke
+      name: One-shot read-only synthetic FastMCP benchmark (dedicated Mac account)
+      shell: bash
+      env:
+        FASTMCP_ACTION_DIR: ${{ github.action_path }}
+        PYTHONDONTWRITEBYTECODE: "1"
+        PIP_DISABLE_PIP_VERSION_CHECK: "1"
+        PIP_NO_INPUT: "1"
+      run: |
+        set -euo pipefail
+        test "$(uname -s)" = Darwin
+        test "$(uname -m)" = arm64
+        test -n "$RUNNER_TEMP"
+        root="$(cd "$FASTMCP_ACTION_DIR/../../.." && pwd -P)"
+        work="$RUNNER_TEMP/alfred-fastmcp4-synthetic"
+        test ! -e "$work"
+        mkdir -m 700 "$work"
+        trap 'rm -rf "$work"' EXIT
+        python3 -m venv "$work/venv"
+        "$work/venv/bin/python" -m pip install -q --no-input "fastmcp==4.1.0"
+        receipt="$(cd "$root" && "$work/venv/bin/python" experiments/fastmcp4/smoke.py)"
+        RECEIPT="$receipt" python3 - <<'PY'
+        import json, os
+        data = json.loads(os.environ["RECEIPT"])
+        assert data["kind"] == "alfred_fastmcp4_synthetic_mac_v1"
+        assert data["verified"] is True
+        assert data["synthetic"] is True
+        assert data["real_atlas_tested"] is False
+        assert data["five_tool_names_and_schemas"] is True
+        assert data["five_response_parity"] is True
+        assert data["pc03_provenance_preserved"] is True
+        assert data["unknown_tool_denied"] is True
+        assert data["client_auth_forwarding"] is False
+        assert data["fastmcp"] == "4.1.0"
+        assert data["machine"] == "arm64"
+        assert data["elapsed_s"] <= 90
+        assert data["max_rss_mib"] <= 2048
+        assert len(os.environ["RECEIPT"].encode()) <= 1600
+        PY
+        echo "result=$receipt" >> "$GITHUB_OUTPUT"
