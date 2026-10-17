@@ -223,9 +223,9 @@ function allowedOrigin(request) {
 }
 
 /**
- * This handler is reachable in production ONLY behind Workers OAuthProvider.
- * Tests may call it directly with fake bindings; it never validates OAuth
- * itself and must not be wired to a public Worker fetch().
+ * This handler requires an authenticated wrapper: Workers OAuthProvider or
+ * the separately enabled Bearer entrypoint. Tests use fake private bindings.
+ * It never authenticates callers itself; never expose it directly.
  */
 export async function handleAuthenticatedMcp(request, env, backends) {
   if (new URL(request.url).pathname !== "/mcp") return plainResponse(404);
@@ -287,3 +287,4 @@ export async function handleAuthenticatedMcp(request, env, backends) {
   }
   return jsonResponse(jsonrpcError(id, -32601, "Method not found"));
 }
+
