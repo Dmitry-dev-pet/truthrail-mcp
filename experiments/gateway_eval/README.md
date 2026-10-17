@@ -60,3 +60,32 @@ After CI, the only justified conclusion is whether the isolated v1.6.0
 binary enforces the tested rules and hot-reloads. It is **not** proof of
 compatible auth through ChatGPT's already connected tunnel, or that the
 normal ChatGPT UI autonomously loops on \`wait\`.
+
+
+## Reproducible result — 17 Oct 2026 (after test-harness correction)
+
+- [GitHub Actions #39077387948](https://github.com/Dmitry-dev-pet/truthrail-mcp/actions/runs/39077387948):
+  **SUCCESS**, official pinned `agentgateway` 1.6.0 checksum-verified.
+- Synthetic scoped JWT tests: valid `atlas:read` token sees/calls `dataset_info`,
+  cannot see or call `peer_echo`; `chat:send` token sees/calls `peer_echo` once
+  its policy is activated. Wrong audience and bad signatures are rejected.
+- **Hot policy reload and rollback actually worked** while retaining the same
+  agentgateway PID. Prior run #39077287970 failed due to our test mistakenly
+  treating a raised MCP denial as a failed authorization check; the denied
+  call is an expected success condition. Re-run after correcting the test
+  completed successfully.
+- Measured `/proc/<pid>/status` **Agentgateway RSS**: 36.45 MiB before hot
+  policy change, 38.47 MiB after. Synthetic Python MCP backend RSS:
+  67.11 MiB. This is a GitHub-hosted runner snapshot, **not** VPS headroom,
+  cgroup usage, sustained peak, or a comparison with MCPHub.
+- All existing [public source checks #39077387950](https://github.com/Dmitry-dev-pet/truthrail-mcp/actions/runs/39077387950)
+  completed SUCCESS.
+
+**Decision from these observations:** prefer evaluating Agentgateway as an
+upstream policy/router component, not replacing our project with unreviewed
+homegrown identity/token machinery. Don't merge either gateway source or the
+older Access Plane as a live runtime. To decide installation location, we
+must still test the actual **existing** Secure MCP Tunnel's identity
+semantics and 458 MiB VPS capacity under load. Tool-specific resource/room
+authorization remains the owning backend's responsibility unless a separate
+tested request-argument policy is added at the gateway.
