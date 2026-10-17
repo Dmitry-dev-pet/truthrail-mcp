@@ -164,3 +164,34 @@ jobs:
           ALFRED_PINNED_ATLAS_DB: ${{ runner.temp }}/atlas-snapshot/atlas.sqlite
           ALFRED_REQUIRE_PINNED_ATLAS: '1'
         run: python -m unittest discover -s tests -p 'test_pinned_atlas_source_parity.py' -v
+
+  embedded-atlas-container-smoke:
+    name: Smoke one read-only generic MCP container with real public Atlas data
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check out exact public Atlas source revision
+        uses: actions/checkout@v4
+        with:
+          repository: Dmitry-dev-pet/rulers-chronology-audit
+          ref: cb3c65853628607f2e03f30bc4e1a47063b13cd4
+          path: .pinned-atlas
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install public MCP client for loopback smoke
+        run: python -m pip install -q --disable-pip-version-check 'mcp==2.3.0'
+      - name: Build one-process Atlas container without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --file experiments/embedded_atlas/Dockerfile --tag truthrail-embedded-atlas:local-test .
+      - name: Smoke five real-data tools over loopback MCP HTTP and remove container
+        shell: bash
+        run: bash experiments/embedded_atlas/smoke.sh truthrail-embedded-atlas:local-test
