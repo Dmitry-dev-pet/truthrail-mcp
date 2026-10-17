@@ -195,3 +195,6 @@ jobs:
       - name: Smoke five real-data tools over loopback MCP HTTP and remove container
         shell: bash
         run: bash experiments/embedded_atlas/smoke.sh truthrail-embedded-atlas:local-test
+      - name: Smoke opt-in peer-chat long-poll over real loopback MCP HTTP
+        shell: bash
+        run: bash experiments/embedded_atlas/smoke_peer.sh truthrail-embedded-atlas:local-test

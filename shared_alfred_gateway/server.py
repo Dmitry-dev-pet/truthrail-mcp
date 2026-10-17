@@ -2,11 +2,12 @@
 
 The existing Atlas HTTPS tunnel client remains pointed at the working Atlas
 service until an independently approved migration. This optional server
-is NOT the existing infra GitHub/OAuth gateway. All tools are read-only,
-statically typed, tightly bounded, and forwarded to separately scoped owners.
+is NOT the existing infra GitHub/OAuth gateway. Atlas tools stay read-only.
+A separately enabled peer-chat experiment stores bounded inert text in memory.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -18,6 +19,7 @@ ATLAS_TOOLS = (
     "compare_rulers", "get_evidence",
 )
 CAPTION_TOOL = "youtube_transcript"
+PEER_CHAT_TOOLS = ("chat_create", "chat_send", "chat_wait", "chat_close")
 ATLAS_ORIGINS = frozenset({
     "http://app:8765/mcp",             # existing private Atlas Docker network
     "http://127.0.0.1:8020/mcp",      # existing Atlas VPS loopback
@@ -131,6 +133,7 @@ def make_server(
     captions_enabled: bool = False,
     _atlas_backend: Backend | None = None,
     _caption_backend: Backend | None = None,
+    peer_chat_enabled: bool = False,
 ):
     from mcp.server import MCPServer
 
@@ -219,6 +222,56 @@ def make_server(
                 return {"available": False, "reason": "caption-backend-response-invalid"}
             return response
 
+    # Strictly opt-in.  One Mailbox instance belongs to this MCPServer process,
+    # so all sessions entering via the existing tunnel see the same messages.
+    # Do not scale this server to multiple replicas or share an unauthenticated
+    # MCP port: room IDs are capability identifiers, not user authentication.
+    if peer_chat_enabled:
+        from shared_alfred_gateway.peer_chat import Mailbox, MAX_WAIT
+
+        peer_mailbox = Mailbox()
+
+        @server.tool()
+        async def chat_create() -> dict:
+            """Open one short-lived two-role room (do not publish its room ID)."""
+            try:
+                return peer_mailbox.create_room()
+            except OverflowError:
+                return {"status": "error", "reason": "room-limit"}
+
+        @server.tool()
+        async def chat_send(
+            room_id: str, sender: str, message: str, reply_to: int | None = None
+        ) -> dict:
+            """Post a bounded inert text message as A or B; never execute it."""
+            try:
+                return peer_mailbox.send(room_id, sender, message, reply_to)
+            except (ValueError, OverflowError) as exc:
+                return {"status": "error", "reason": str(exc)}
+
+        @server.tool()
+        async def chat_wait(
+            room_id: str, role: str, after_id: int = 0,
+            wait_seconds: int = 15,
+        ) -> dict:
+            """Block <=20 seconds waiting for the other role's next message."""
+            if type(wait_seconds) is not int or not 0 <= wait_seconds <= MAX_WAIT:
+                return {"status": "error", "reason": "invalid-wait"}
+            try:
+                return await asyncio.to_thread(
+                    peer_mailbox.wait, room_id, role, after_id, wait_seconds
+                )
+            except ValueError as exc:
+                return {"status": "error", "reason": str(exc)}
+
+        @server.tool()
+        async def chat_close(room_id: str) -> dict:
+            """Close an ephemeral peer-chat room and wake pending waits."""
+            try:
+                return peer_mailbox.close(room_id)
+            except ValueError as exc:
+                return {"status": "error", "reason": str(exc)}
+
     return server
 
 
@@ -236,6 +289,7 @@ def main() -> None:
         atlas_url=os.environ.get("ALFRED_ATLAS_URL", "http://app:8765/mcp"),
         caption_url=os.environ.get("ALFRED_CAPTION_URL") if active else None,
         captions_enabled=active,
+        peer_chat_enabled=os.environ.get("ALFRED_PEER_CHAT_MCP_ENABLED") == "1",
     )
     gateway.run(
         transport="streamable-http", host=host, port=port,

@@ -17,7 +17,7 @@ from unittest.mock import patch
 from shared_alfred_gateway.atlas_local import (
     make_embedded_server, local_query_backend,
 )
-from shared_alfred_gateway.server import ATLAS_TOOLS
+from shared_alfred_gateway.server import ATLAS_TOOLS, PEER_CHAT_TOOLS
 
 CASES = (
     ("dataset_info", {}),
@@ -120,6 +120,26 @@ class PinnedAtlasRealSourceTests(unittest.TestCase):
                     else:
                         denied = bool(getattr(result, "is_error", False))
                     self.assertTrue(denied, "unknown tool accepted")
+
+
+            # The same embedded process must still serve the original five
+            # exact public Atlas responses when optional chat is enabled.
+            # No VPS, production tunnel or personal source is contacted.
+            enabled = make_embedded_server(AtlasQuery(db), peer_chat_enabled=True)
+            async with Client(original, raise_exceptions=True) as source_again, \
+                       Client(enabled, raise_exceptions=True) as peer_enabled:
+                original_schemas = signatures(await source_again.list_tools())
+                nine_schemas = signatures(await peer_enabled.list_tools())
+                self.assertEqual(set(nine_schemas),
+                                 set(ATLAS_TOOLS) | set(PEER_CHAT_TOOLS))
+                for original_name in ATLAS_TOOLS:
+                    self.assertEqual(nine_schemas[original_name],
+                                     original_schemas[original_name])
+                for tool_name, args in CASES:
+                    direct = read_result(await source_again.call_tool(tool_name, args))
+                    routed = read_result(await peer_enabled.call_tool(tool_name, args))
+                    self.assertEqual(direct, routed,
+                                     "optional peer chat changed Atlas result")
 
         asyncio.run(check())
 
