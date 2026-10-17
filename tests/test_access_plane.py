@@ -335,6 +335,17 @@ class McpSdkFacadeTests(AccessPlaneFixture):
                 listed = unpack(await a.call_tool("capabilities_list", {}))
                 self.assertEqual(listed["capabilities"][0]["name"], "peer_chat")
 
+                # Flip only the digest-addressed module pointer while both
+                # already-connected MCP clients stay open. No tool reregistration,
+                # process restart, container rebuild or code import.
+                self.modules[0]["version"] = "hot-2"
+                self._write_modules()
+                updated = unpack(await b.call_tool("capabilities_list", {}))
+                self.assertEqual(updated["capabilities"][0]["version"], "hot-2")
+                self.assertEqual(
+                    {x.name for x in (await b.list_tools()).tools}, names
+                )
+
                 created = await invoke(a, "capabilities_write", "create", {})
                 room = created["room_id"]
                 joined = await invoke(b, "capabilities_write", "join", {
