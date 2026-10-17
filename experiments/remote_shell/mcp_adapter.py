@@ -59,12 +59,20 @@ def main():
         os.environ.get("ALFRED_RELAY_URL", ""),
         os.environ.get("ALFRED_RELAY_AGENT_TOKEN", ""),
     )
-    if os.environ.get("ALFRED_EXPERIMENTAL_SHELL_BIND", "127.0.0.1") != "127.0.0.1":
-        raise SystemExit("shell-mcp-requires-loopback-bind")
-    server.run(
-        transport="streamable-http", host="127.0.0.1", port=8769,
-        stateless_http=True, json_response=True, max_request_body_size=100000,
-    )
+    transport = os.environ.get("ALFRED_EXPERIMENTAL_SHELL_TRANSPORT", "stdio")
+    if transport == "stdio":
+        # OpenAI Secure MCP Tunnel can launch this server as a child process.
+        # No additional listening socket is required on the VPS.
+        server.run(transport="stdio")
+    elif transport == "streamable-http":
+        if os.environ.get("ALFRED_EXPERIMENTAL_SHELL_BIND", "127.0.0.1") != "127.0.0.1":
+            raise SystemExit("shell-mcp-requires-loopback-bind")
+        server.run(
+            transport="streamable-http", host="127.0.0.1", port=8769,
+            stateless_http=True, json_response=True, max_request_body_size=100000,
+        )
+    else:
+        raise SystemExit("unsupported-shell-mcp-transport")
 
 
 if __name__ == "__main__":
