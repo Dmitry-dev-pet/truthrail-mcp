@@ -45,6 +45,93 @@ class ClientTests(unittest.TestCase):
         self.assertFalse(result["revocation_verified"])
         self.assertEqual(calls, ["tools/list", "tools/list", "initialize", "notifications/initialized", "tools/list", "tools/call", "tools/call"])
 
+    def test_phases_are_isolated_from_provider_contents(self):
+        token = "alf_" + "a" * 43
+        endpoint = "https://mcp.example.invalid/mcp"
+        safe_cases = [
+            (0, "anonymous-denial", "unauthorized-access-not-denied", 429),
+            (1, "wrong-token-denial", "unauthorized-access-not-denied", 503),
+            (2, "initialize", "mcp-response-failed", 502),
+            (3, "notification", "initialization-notification-failed", 403),
+            (4, "tools-list", "mcp-response-failed", 500),
+            (5, "dataset-info", "mcp-response-failed", 502),
+            (6, "get-evidence", "mcp-response-failed", 502),
+        ]
+
+        def ok_message(message):
+            method = message["method"]
+            if method == "notifications/initialized":
+                return 202, None
+            if method == "initialize":
+                result = {"protocolVersion": client.PROTOCOL}
+            elif method == "tools/list":
+                result = {"tools": [{"name": name} for name in sorted(client.TOOLS)]}
+            elif method == "tools/call":
+                if message["params"]["name"] == "dataset_info":
+                    result = {"structuredContent": {"dataset": "canonical-rulers-atlas-v1",
+                                                    "canonical_persons": 2}}
+                else:
+                    result = {"structuredContent": {"found": True, "record_id": "power-p03",
+                                                    "source_ids": ["PC03"]}}
+            return 200, {"jsonrpc": "2.0", "id": message["id"], "result": result}
+
+        for fail_index, phase, expected_reason, status in safe_cases:
+            with self.subTest(phase=phase):
+                calls = []
+                def fake_post(url, supplied, message):
+                    self.assertEqual(url, endpoint)
+                    idx = len(calls)
+                    calls.append(idx)
+                    if idx == fail_index:
+                        # A non-401 failure in a denial phase is reported as a failure, not success.
+                        return status, {"PRIVATE_RESPONSE": token}
+                    if idx < 2:
+                        return 401, None
+                    return ok_message(message)
+                with patch.object(client, "post", fake_post):
+                    with self.assertRaises(client.ProbeError) as context:
+                        client.smoke(endpoint, token)
+                error = context.exception
+                self.assertEqual((error.phase, error.code, error.http_status),
+                                 (phase, expected_reason, status))
+                self.assertNotIn(token, str(error))
+
+    def test_exception_message_is_never_propagated_to_diagnostics(self):
+        error = client.ProbeError("SECRET_alf_" + "A"*70,
+                                  phase="SECRET_headers", http_status="SECRET_403")
+        self.assertEqual((error.code, error.phase, error.http_status),
+                         ("unverified", "unknown", 0))
+        with self.assertRaises(client.ProbeError) as context:
+            client.in_phase("initialize", lambda: (_ for _ in ()).throw(error))
+        self.assertEqual((context.exception.code, context.exception.phase,
+                          context.exception.http_status),
+                         ("unverified", "initialize", 0))
+        self.assertNotIn("SECRET", str(context.exception))
+
+    def test_invalid_rpc_and_tool_data_are_attributed_to_a_phase(self):
+        token = "alf_" + "a" * 43
+        calls = []
+        def fake_post(url, supplied, message):
+            idx = len(calls)
+            calls.append(message["method"])
+            if idx < 2:
+                return 401, None
+            if message["method"] == "initialize":
+                return 200, {"jsonrpc": "2.0", "id": 2,
+                             "result": {"protocolVersion": client.PROTOCOL}}
+            if message["method"] == "notifications/initialized":
+                return 202, None
+            if message["method"] == "tools/list":
+                return 200, {"jsonrpc": "2.0", "id": 3,
+                             "result": {"tools": [{"name": name} for name in client.TOOLS]}}
+            return 200, {"jsonrpc": "2.0", "id": 4, "result": {"content": []}}
+        with patch.object(client, "post", fake_post):
+            with self.assertRaises(client.ProbeError) as context:
+                client.smoke("https://mcp.example.invalid/mcp", token)
+        self.assertEqual((context.exception.phase, context.exception.code,
+                          context.exception.http_status),
+                         ("dataset-info", "mcp-tool-data-failed", 0))
+
     def test_unauthenticated_success_is_failure(self):
         with patch.object(client, "post", return_value=(200, {})):
             with self.assertRaisesRegex(client.ProbeError, "not-denied"):
