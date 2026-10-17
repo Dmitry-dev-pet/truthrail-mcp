@@ -18,8 +18,47 @@ MAX_RESPONSE = 196608
 PROTOCOL = "2025-11-25"
 
 
+# Fixed diagnostic vocabulary. Neither arbitrary exception messages nor
+# HTTP response contents are ever allowed into operation receipts.
+SAFE_PHASES = frozenset({
+    "anonymous-denial", "wrong-token-denial", "initialize", "notification",
+    "tools-list", "dataset-info", "get-evidence", "revocation",
+})
+SAFE_ERRORS = frozenset({
+    "invalid-endpoint", "client-dependency-unavailable", "https-request-failed",
+    "response-too-large", "expected-json-response", "invalid-json-response",
+    "mcp-response-failed", "mcp-rpc-failed", "mcp-tool-failed",
+    "mcp-tool-data-failed", "missing-or-invalid-client-credential",
+    "unauthorized-access-not-denied", "protocol-negotiation-failed",
+    "initialization-notification-failed", "unexpected-tool-surface",
+    "unexpected-atlas-dataset", "sourced-evidence-missing",
+    "revoked-credential-not-denied",
+})
+
+
 class ProbeError(Exception):
-    pass
+    def __init__(self, code, *, phase="unknown", http_status=0):
+        # A tool/provider exception must never become a log line or receipt.
+        self.code = code if isinstance(code, str) and code in SAFE_ERRORS else "unverified"
+        self.phase = phase if isinstance(phase, str) and phase in SAFE_PHASES else "unknown"
+        self.http_status = (http_status if type(http_status) is int and 100 <= http_status <= 599
+                            else 0)
+        super().__init__(self.code)
+
+
+def in_phase(phase, operation):
+    """Tag a bounded local protocol step; no callbacks or source data in errors."""
+    if phase not in SAFE_PHASES:
+        raise ProbeError("unverified")
+    try:
+        return operation()
+    except ProbeError as error:
+        raise ProbeError(error.code, phase=phase, http_status=error.http_status) from None
+
+
+def required_status(status, expected, reason):
+    if status != expected:
+        raise ProbeError(reason, http_status=status)
 
 
 def endpoint_url(value):
@@ -64,7 +103,11 @@ def post(endpoint, token, message):
                     return status, None
                 if "application/json" not in response.headers.get("Content-Type", "").lower():
                     raise ProbeError("expected-json-response")
-                return status, json.loads(payload)
+                try:
+                    parsed = json.loads(payload)
+                except (ValueError, UnicodeError):
+                    raise ProbeError("invalid-json-response", http_status=status) from None
+                return status, parsed
     except (httpx2.HTTPError, OSError, ValueError):
         raise ProbeError("https-request-failed") from None
 
@@ -74,9 +117,9 @@ def rpc(endpoint, token, identifier, method, params=None):
         message["params"] = params
     status, body = post(endpoint, token, message)
     if status != 200 or not isinstance(body, dict) or body.get("jsonrpc") != "2.0" or body.get("id") != identifier:
-        raise ProbeError("mcp-response-failed")
+        raise ProbeError("mcp-response-failed", http_status=status)
     if "error" in body or not isinstance(body.get("result"), dict):
-        raise ProbeError("mcp-rpc-failed")
+        raise ProbeError("mcp-rpc-failed", http_status=status)
     return body["result"]
 
 
@@ -103,28 +146,49 @@ def smoke(endpoint, token):
     if not re.fullmatch(r"alf_[A-Za-z0-9_-]{43,86}", token):
         raise ProbeError("missing-or-invalid-client-credential")
     probe = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
-    for candidate in (None, "alf_" + secrets.token_urlsafe(32)):
-        if post(endpoint, candidate, probe)[0] != 401:
-            raise ProbeError("unauthorized-access-not-denied")
-    init = rpc(endpoint, token, 2, "initialize", {"protocolVersion": PROTOCOL,
-               "capabilities": {}, "clientInfo": {"name": "truthrail-minimal-client", "version": "0.1.0"}})
+
+    def assert_denial(candidate):
+        status, _ = post(endpoint, candidate, probe)
+        required_status(status, 401, "unauthorized-access-not-denied")
+
+    in_phase("anonymous-denial", lambda: assert_denial(None))
+    # This is an independent random token. The grant under test is never logged.
+    in_phase("wrong-token-denial", lambda: assert_denial("alf_" + secrets.token_urlsafe(32)))
+
+    init = in_phase("initialize", lambda: rpc(
+        endpoint, token, 2, "initialize", {
+            "protocolVersion": PROTOCOL, "capabilities": {},
+            "clientInfo": {"name": "truthrail-minimal-client", "version": "0.1.0"},
+        }))
     if init.get("protocolVersion") != PROTOCOL:
-        raise ProbeError("protocol-negotiation-failed")
-    if post(endpoint, token, {"jsonrpc": "2.0", "method": "notifications/initialized"})[0] != 202:
-        raise ProbeError("initialization-notification-failed")
-    listed = rpc(endpoint, token, 3, "tools/list").get("tools", [])
-    if len(listed) != 5 or {row.get("name") for row in listed} != TOOLS:
-        raise ProbeError("unexpected-tool-surface")
-    info = tool_data(rpc(endpoint, token, 4, "tools/call", {"name": "dataset_info", "arguments": {}}))
-    if info.get("dataset") != "canonical-rulers-atlas-v1" or type(info.get("canonical_persons")) is not int or info["canonical_persons"] < 1:
-        raise ProbeError("unexpected-atlas-dataset")
-    evidence = tool_data(rpc(endpoint, token, 5, "tools/call", {"name": "get_evidence", "arguments": {"record_id": "power-p03"}}))
-    if evidence.get("found") is not True or evidence.get("record_id") != "power-p03" or "PC03" not in evidence.get("source_ids", []):
-        raise ProbeError("sourced-evidence-missing")
+        raise ProbeError("protocol-negotiation-failed", phase="initialize", http_status=200)
+
+    def assert_notification():
+        status, _ = post(endpoint, token, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+        required_status(status, 202, "initialization-notification-failed")
+    in_phase("notification", assert_notification)
+
+    listed = in_phase("tools-list", lambda: rpc(endpoint, token, 3, "tools/list").get("tools", []))
+    if not isinstance(listed, list) or len(listed) != 5 or any(
+            not isinstance(row, dict) for row in listed) or {row.get("name") for row in listed} != TOOLS:
+        raise ProbeError("unexpected-tool-surface", phase="tools-list", http_status=200)
+
+    info = in_phase("dataset-info", lambda: tool_data(rpc(
+        endpoint, token, 4, "tools/call", {"name": "dataset_info", "arguments": {}})))
+    if (info.get("dataset") != "canonical-rulers-atlas-v1"
+            or type(info.get("canonical_persons")) is not int or info["canonical_persons"] < 1):
+        raise ProbeError("unexpected-atlas-dataset", phase="dataset-info", http_status=200)
+
+    evidence = in_phase("get-evidence", lambda: tool_data(rpc(
+        endpoint, token, 5, "tools/call",
+        {"name": "get_evidence", "arguments": {"record_id": "power-p03"}})))
+    if (evidence.get("found") is not True or evidence.get("record_id") != "power-p03"
+            or "PC03" not in evidence.get("source_ids", [])):
+        raise ProbeError("sourced-evidence-missing", phase="get-evidence", http_status=200)
+
     return {"transport": "external_https", "anonymous_denied": True, "wrong_token_denied": True,
             "tools": 5, "canonical_persons": info["canonical_persons"], "sourced_evidence": True,
             "revocation_verified": False, "model_called": False}
-
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -136,15 +200,24 @@ def main():
         if args.revoked_only:
             if not re.fullmatch(r"alf_[A-Za-z0-9_-]{43,86}", token):
                 raise ProbeError("missing-or-invalid-client-credential")
-            if post(endpoint, token, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})[0] != 401:
-                raise ProbeError("revoked-credential-not-denied")
+            in_phase("revocation", lambda: required_status(
+                post(endpoint, token, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"})[0],
+                401, "revoked-credential-not-denied"))
             result = {"revoked_credential_denied": True, "model_called": False}
         else:
             result = smoke(endpoint, token)
         print(json.dumps(result, sort_keys=True))
         return 0
-    except (ProbeError, ValueError):
-        print(json.dumps({"verified": False, "reason": "client-smoke-failed"}))
+    except ProbeError as error:
+        # Strictly local enum labels and a numeric HTTP code only.
+        print(json.dumps({"verified": False, "reason": "client-smoke-failed",
+                          "phase": error.phase, "code": error.code,
+                          "http_status": error.http_status}, sort_keys=True))
+        return 1
+    except ValueError:
+        print(json.dumps({"verified": False, "reason": "client-smoke-failed",
+                          "phase": "unknown", "code": "unverified", "http_status": 0},
+                         sort_keys=True))
         return 1
 
 
