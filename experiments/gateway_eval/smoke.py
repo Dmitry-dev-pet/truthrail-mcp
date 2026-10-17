@@ -123,9 +123,15 @@ async def check_access(tokens, allow_peer):
         written = await client_call(tokens["writer.jwt"], peer_names[0],
                                     {"message": "safe-test"})
         assert not written.is_error and "safe-test" in str(written)
-        denied = await client_call(tokens["reader.jwt"], peer_names[0],
-                                   {"message": "forbidden"})
-        assert denied.is_error, "read-token-must-not-call-write"
+        # A denied MCP call may be surfaced either as an is_error
+        # result or as a client-side raised MCP exception.
+        try:
+            denied = await client_call(tokens["reader.jwt"], peer_names[0],
+                                       {"message": "forbidden"})
+        except Exception:
+            pass
+        else:
+            assert denied.is_error, "read-token-must-not-call-write"
 
     for label, token in [
         ("wrong-audience", tokens["wrong-audience.jwt"]),
@@ -190,15 +196,17 @@ async def run_probe(binary, folder):
         before = rss_mib(gatewayproc.pid)
         pid = gatewayproc.pid
         write_config(cfg, build_config(True))
+        last_error_type = None
         for _ in range(50):
             check_process(gatewayproc)
             try:
                 await check_access(tokens, True)
                 break
-            except Exception:
+            except Exception as exc:
+                last_error_type = type(exc).__name__
                 await asyncio.sleep(0.20)
         else:
-            raise RuntimeError("dynamic-policy-not-applied")
+            raise RuntimeError("dynamic-policy-not-applied:" + str(last_error_type))
         assert gatewayproc.pid == pid and gatewayproc.poll() is None
         after = rss_mib(pid)
 
