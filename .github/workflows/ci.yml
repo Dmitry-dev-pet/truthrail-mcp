@@ -127,3 +127,40 @@ jobs:
           "$RUNNER_TEMP/http-sdk2/bin/python" -B -m experiments.http_compare.measure \
             "$RUNNER_TEMP/http-sdk2/bin/python" \
             "$RUNNER_TEMP/http-fastmcp4/bin/python"
+
+  pinned-real-atlas-source-parity:
+    name: Verify canonical Atlas data with the one-process MCP
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check out public source at the exact Atlas image revision
+        uses: actions/checkout@v4
+        with:
+          repository: Dmitry-dev-pet/rulers-chronology-audit
+          ref: cb3c65853628607f2e03f30bc4e1a47063b13cd4
+          path: .pinned-atlas
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned public MCP SDK
+        run: python -m pip install -q --disable-pip-version-check -r requirements-shared.txt
+      - name: Build canonical SQLite in isolated runner from public source
+        working-directory: .pinned-atlas
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/atlas-snapshot"
+          python -m scripts.atlas_db build --output "$RUNNER_TEMP/atlas-snapshot" > /dev/null
+          test -s "$RUNNER_TEMP/atlas-snapshot/atlas.sqlite"
+      - name: Check exact five real-source tool signatures and results
+        env:
+          ALFRED_PINNED_ATLAS_ROOT: ${{ github.workspace }}/.pinned-atlas
+          ALFRED_PINNED_ATLAS_DB: ${{ runner.temp }}/atlas-snapshot/atlas.sqlite
+          ALFRED_REQUIRE_PINNED_ATLAS: '1'
+        run: python -m unittest discover -s tests -p 'test_pinned_atlas_source_parity.py' -v
