@@ -55,3 +55,46 @@ jobs:
         run: python -m pip install --disable-pip-version-check 'fastmcp==4.1.0'
       - name: Run wholly synthetic proxy smoke
         run: python experiments/fastmcp4/smoke.py
+
+
+  sdk-matched-synthetic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Install each SDK into its own ephemeral environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/mcp-sdk2"
+          python -m venv "$RUNNER_TEMP/mcp-fastmcp4"
+          "$RUNNER_TEMP/mcp-sdk2/bin/python" -m pip install -q --disable-pip-version-check 'mcp==2.3.0'
+          "$RUNNER_TEMP/mcp-fastmcp4/bin/python" -m pip install -q --disable-pip-version-check 'fastmcp==4.1.0'
+      - name: Run matched in-process five-tool fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          receipt2="$("$RUNNER_TEMP/mcp-sdk2/bin/python" experiments/sdk_comparison/benchmark.py mcp2)"
+          receipt4="$("$RUNNER_TEMP/mcp-fastmcp4/bin/python" experiments/sdk_comparison/benchmark.py fastmcp4)"
+          SDK2="$receipt2" FASTMCP4="$receipt4" python - <<'PY'
+          import json, os
+          a, b = (json.loads(os.environ[k]) for k in ("SDK2", "FASTMCP4"))
+          for row, sdk, version in ((a, "mcp2", "2.3.0"), (b, "fastmcp4", "4.1.0")):
+              assert row["verified"] is True and row["synthetic"] is True
+              assert row["sdk"] == sdk and row["sdk_version"] == version
+              assert row["five_tool_names_schemas_results"] is True
+              assert row["unknown_tool_denied"] is True
+              assert row["calls_measured"] == 50
+              assert row["real_atlas_tested"] is False
+              assert row["transport"] == "in_process"
+              assert 0 < row["peak_rss_mib"] < 2048
+          assert a["python"] == b["python"]
+          assert a["architecture"] == b["architecture"]
+          print("mcp2:", json.dumps(a, sort_keys=True))
+          print("fastmcp4:", json.dumps(b, sort_keys=True))
+          PY
