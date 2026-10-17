@@ -89,3 +89,51 @@ must still test the actual **existing** Secure MCP Tunnel's identity
 semantics and 458 MiB VPS capacity under load. Tool-specific resource/room
 authorization remains the owning backend's responsibility unless a separate
 tested request-argument policy is added at the gateway.
+
+
+
+## Peer Chat-only phase — Atlas is NOT a prerequisite (18 Oct 2026)
+
+Superseding operator decision: [infra-access #470](https://github.com/Dmitry-dev-pet/infra-access/issues/470).
+This second hosted-CI test replaces the synthetic Atlas mock with **one
+standalone stateful Peer Chat backend**, while keeping the **same pinned
+Agentgateway v1.6.0** and its JWT tool-scoping configuration.
+
+- Two **separately authenticated MCP HTTP clients** with distinct exact JWT
+  scope lists: A can create/send/wait/close; B can join/send/wait.
+  Observer can only see a read-only status tool when the reviewed gateway
+  config explicitly enables that scope. No `dataset_info` / Atlas target.
+- A creates a disposable room with a role A ticket and a **one-use B invite**.
+  B redeems the invite for a role B ticket. Backend verifies tickets (hashed
+  at rest), room ID, role and cursor; only inert bounded text is accepted.
+  Backend **cannot know the real ChatGPT tab identity**, even when the
+  token scopes are distinct in this fixture.
+- Three genuine bidirectional blocking `chat_wait` wake-ups across two
+  persistent HTTP MCP connections; idle timeout and no cursor replay.
+- JWT tool list visibility, attempt to invoke a disallowed tool, attempt to
+  use invitation as send ticket, replayed invite, invalid room or ticket,
+  close and denial after close.
+- Hot-add the `chat_status` authorization policy **while both clients and
+  backend remain running**, verify its call, revert the policy without
+  replacing either process. Original room state must survive.
+- Report both processes' resident RSS on disposable GitHub-hosted Linux.
+  Does **not** measure VPS cgroup memory, actual ChatGPT tunnel identity or
+  sustained swap load. Neither process is installed on VPS. The test
+  does not imply that ordinary ChatGPT can issue repeated tool calls
+  without another user message.
+
+**Security boundary:** the backend binds **only to loopback** in the test.
+Per-tool JWT checks happen at Agentgateway; room tickets belong to the
+backend and cannot be replaced by simple `sender="A"` arguments. These
+test tokens are generated ephemerally and never logged in the CI receipt.
+Production must keep the backend private from the Internet and isolate
+its network interface so that clients cannot bypass the JWT gateway.
+
+Agentgateway remains a router and policy engine, not a Python runtime.
+A tiny Peer Chat backend is still needed to store shared room state.
+Adding independent backends later should require only a reviewed route
+and policy update on the gateway; **new executable backend logic may still
+need a separate backend release, but not a new Agentgateway image**.
+
+This is an **off-VPS E2E MCP transport test**, not a live ChatGPT
+connection or authorization to replace the existing app/tunnel.

@@ -29,6 +29,9 @@ def main(path):
     for filename, sub, scopes, aud in [
         ("reader.jwt", "reader", ["atlas:read"], AUDIENCE),
         ("writer.jwt", "writer", ["atlas:read", "chat:send"], AUDIENCE),
+        ("a.jwt", "peer-A", ["chat:create", "chat:send", "chat:wait", "chat:close"], AUDIENCE),
+        ("b.jwt", "peer-B", ["chat:join", "chat:send", "chat:wait"], AUDIENCE),
+        ("observer.jwt", "peer-observer", ["chat:status"], AUDIENCE),
         ("wrong-audience.jwt", "outsider", ["atlas:read"], "wrong-audience"),
     ]:
         target = folder / filename

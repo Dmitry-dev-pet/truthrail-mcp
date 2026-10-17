@@ -37,3 +37,9 @@ jobs:
         run: |
           set -euo pipefail
           python -m experiments.gateway_eval.smoke "$RUNNER_TEMP/agentgateway"
+
+      - name: Test isolated Agentgateway + minimal shared Peer Chat, no Atlas
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m experiments.gateway_eval.peer_smoke "$RUNNER_TEMP/agentgateway"
