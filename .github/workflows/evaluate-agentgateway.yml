@@ -43,3 +43,16 @@ jobs:
         run: |
           set -euo pipefail
           python -m experiments.gateway_eval.peer_smoke "$RUNNER_TEMP/agentgateway"
+
+      - name: Build disposable one-image Agentgateway and Peer Chat (no Atlas)
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/alfred-peer-image"
+          mkdir -p "$work"
+          cp "$RUNNER_TEMP/agentgateway" "$work/agentgateway"
+          cp experiments/gateway_eval/peer_backend.py "$work/peer_backend.py"
+          cp experiments/gateway_eval/package/Dockerfile "$work/Dockerfile"
+          cp experiments/gateway_eval/package/entrypoint.sh "$work/entrypoint.sh"
+          docker build --tag alfred-peer-only:hosted-test "$work"
+          bash experiments/gateway_eval/package/smoke_container.sh alfred-peer-only:hosted-test
