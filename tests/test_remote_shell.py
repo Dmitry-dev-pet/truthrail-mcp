@@ -112,6 +112,48 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(outputs[1]["stdout"].strip(), "/tmp")
         self.assertEqual(outputs[2]["stdout"], "WORKS")
 
+
+    def test_mcp_protocol_round_trip_via_inprocess_client(self):
+        """Use real MCP tool calls, not direct Python method calls."""
+        import asyncio
+        import json
+        from mcp import Client
+        from experiments.remote_shell.mcp_adapter import make_server
+
+        outputs = []
+        def terminal():
+            outputs.append(run_command(
+                self.url, MAC_TOKEN, "printf integration",
+                wait_timeout=8
+            ))
+        worker = threading.Thread(target=terminal, daemon=True)
+        worker.start()
+
+        async def exercise():
+            async with Client(make_server(self.url, AGENT_TOKEN),
+                              raise_exceptions=True) as client:
+                listed = await client.list_tools()
+                self.assertEqual(
+                    {tool.name for tool in listed.tools},
+                    {"terminal_wait", "terminal_reply"},
+                )
+                received = await client.call_tool("terminal_wait", {"wait_seconds": 3})
+                self.assertFalse(received.is_error)
+                leased = received.structured_content
+                if leased is None:
+                    leased = json.loads(received.content[0].text)
+                self.assertEqual(leased["command"], "printf integration")
+                ack = await client.call_tool("terminal_reply", {
+                    "command_id": leased["command_id"],
+                    "stdout": "integration", "stderr": "", "exit_code": 0,
+                })
+                self.assertFalse(ack.is_error)
+        asyncio.run(exercise())
+        worker.join(timeout=8)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(outputs[0]["stdout"], "integration")
+
+
     def test_role_separation(self):
         with self.assertRaises(RuntimeError) as ctx:
             call(self.url, MAC_TOKEN, "GET", "/v1/commands/next?wait=0")
