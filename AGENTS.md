@@ -8,7 +8,7 @@ This is a **public, reusable source reference**, not a live authorization server
 2. Restrict tool exposure and upstream origins explicitly. Deny unknown tools; do not add arbitrary URL/SSH/shell/Docker features, raw SQL, universal execution, or GitHub Actions trigger tools.
 3. Keep authentication at each transport boundary. Never forward a caller's Authorization header to another backend by default.
 4. Preserve least-privilege scopes, output limits, sanitized errors, evidence/source provenance, and opt-in backend registration.
-5. Production-capable changes require separate review by the owning private deployment/control plane. \`executed != verified\`.
+5. Production-capable changes require separate review by the owning private deployment/control plane. `executed != verified`.
 6. FastMCP synthetic parity does not establish real Atlas parity, Mac runner access, actual HTTP authentication, resource headroom or deployment readiness.
 7. Avoid embedding fixed owner-specific domains or GitHub identity in reusable Worker code; example domains must be reserved/non-routable.
 8. No personal subscription OAuth through an inference/MCP proxy.
