@@ -74,6 +74,15 @@ deployment to become effective, then runs:
 python tools/mcp_client_smoke.py --revoked-only
 ```
 
+The standalone smoke includes **bounded diagnostic phase identifiers**
+(`anonymous-denial`, `wrong-token-denial`, `initialize`, `notification`,
+`tools-list`, `dataset-info`, `get-evidence`, and `revocation`).
+On failure it emits only a fixed cause code and numeric HTTP status, never token,
+URL, response body, source text, raw exception or transport headers. The owning
+deployment must independently whitelist these values before reporting them in
+its operation receipt. These diagnostics do not relax the required 401/202/200
+checks or enable a client to access a real backend.
+
 The normal smoke truthfully reports `revocation_verified: false`; a successful
 second probe is required separately. Registry replacement is a deployment change;
 revocation takes effect as that deployment propagates, not instantly everywhere.
