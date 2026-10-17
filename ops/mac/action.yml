@@ -1,0 +1,20 @@
+name: Inspect source-pinned FastMCP4 Mac package
+description: Metadata-only preparation for a future reviewed Mac smoke; never installs or executes test code.
+outputs:
+  ready:
+    description: Offline source package structure verified.
+    value: ${{ steps.check.outputs.ready }}
+runs:
+  using: composite
+  steps:
+    - id: check
+      name: Verify fixed source-only Mac Action package
+      shell: bash
+      env:
+        FASTMCP_PACKAGE_DIR: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        test -f "$FASTMCP_PACKAGE_DIR/fastmcp4_synthetic/action.yml"
+        test -f "$FASTMCP_PACKAGE_DIR/../../experiments/fastmcp4/smoke.py"
+        test -f "$FASTMCP_PACKAGE_DIR/../../experiments/fastmcp4/README.md"
+        echo "ready=true" >> "$GITHUB_OUTPUT"
