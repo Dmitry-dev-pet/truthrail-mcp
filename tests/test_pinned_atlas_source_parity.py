@@ -65,7 +65,10 @@ class PinnedAtlasRealSourceTests(unittest.TestCase):
     def test_real_public_source_five_tool_parity(self):
         root_text = os.environ.get("ALFRED_PINNED_ATLAS_ROOT", "")
         db_text = os.environ.get("ALFRED_PINNED_ATLAS_DB", "")
-        self.assertTrue(root_text and db_text, "pinned public fixture required")
+        if not (root_text and db_text):
+            if os.environ.get("ALFRED_REQUIRE_PINNED_ATLAS") == "1":
+                self.fail("pinned public fixture required")
+            self.skipTest("special pinned Atlas dataset prepared only by integration CI")
         root, db = Path(root_text), Path(db_text)
         self.assertTrue(root.is_dir() and db.is_file(), "missing pinned source")
         self.assertTrue((root / ".git").is_dir() and db.stat().st_size > 0)
