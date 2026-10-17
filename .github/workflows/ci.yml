@@ -98,3 +98,32 @@ jobs:
           print("mcp2:", json.dumps(a, sort_keys=True))
           print("fastmcp4:", json.dumps(b, sort_keys=True))
           PY
+
+
+  persistent-http-synthetic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Prepare separate SDK environments
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/http-sdk2"
+          python -m venv "$RUNNER_TEMP/http-fastmcp4"
+          "$RUNNER_TEMP/http-sdk2/bin/python" -m pip install -q --disable-pip-version-check 'mcp==2.3.0'
+          "$RUNNER_TEMP/http-fastmcp4/bin/python" -m pip install -q --disable-pip-version-check 'fastmcp==4.1.0'
+      - name: Measure real loopback Streamable HTTP servers, synthetic tools only
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/http-sdk2/bin/python" -B -m experiments.http_compare.measure \
+            "$RUNNER_TEMP/http-sdk2/bin/python" \
+            "$RUNNER_TEMP/http-fastmcp4/bin/python"
