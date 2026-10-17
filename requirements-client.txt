@@ -1,0 +1,2 @@
+# Minimal external MCP acceptance only; no model/provider dependencies.
+httpx2==2.13.0

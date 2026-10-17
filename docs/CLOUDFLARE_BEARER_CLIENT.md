@@ -52,7 +52,7 @@ not the reusable source's example hostname.
 
 ## Minimal external acceptance
 
-The standalone stdlib client is `tools/mcp_client_smoke.py`. Its owning executor
+The standalone Python `httpx2` client is `tools/mcp_client_smoke.py`. Install `requirements-client.txt` in an isolated environment. Its owning executor
 supplies `MCP_ENDPOINT` and `MCP_CLIENT_TOKEN` as private environment variables,
 not command-line arguments. The only command is:
 
@@ -90,6 +90,7 @@ cutover for this additional client lane.
 
 ```sh
 node --test cloudflare_worker/tests/bearer.test.mjs cloudflare_worker/tests/mcp.test.mjs
+python -m pip install -r requirements-client.txt
 python -m unittest discover -s tests -p 'test_minimal_mcp_client.py' -v
 ```
 

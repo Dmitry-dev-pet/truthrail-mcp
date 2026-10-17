@@ -50,8 +50,57 @@ class ClientTests(unittest.TestCase):
             with self.assertRaisesRegex(client.ProbeError, "not-denied"):
                 client.smoke("https://mcp.example.invalid/mcp", "alf_" + "a" * 43)
 
-    def test_redirects_are_not_followed(self):
-        self.assertIsNone(client.NoRedirect().redirect_request(None, None, 302, "", {}, "https://other.invalid"))
+    def test_httpx2_transport_auth_and_no_redirect_or_proxy(self):
+        import httpx2
+
+        requests, options = [], []
+        responses = [
+            httpx2.Response(401, headers={"Content-Type": "application/json"}, json={"error": "denied"}),
+            httpx2.Response(307, headers={"Location": "https://other.example.invalid/mcp"}),
+            httpx2.Response(200, headers={"Content-Type": "application/json"},
+                            json={"jsonrpc": "2.0", "id": 2, "result": {}}),
+        ]
+        def respond(request):
+            requests.append(request)
+            return responses.pop(0)
+        original_client = httpx2.Client
+        def isolated_client(**kwargs):
+            options.append(kwargs)
+            return original_client(transport=httpx2.MockTransport(respond), **kwargs)
+        endpoint = "https://mcp.example.invalid/mcp"
+        with patch.object(httpx2, "Client", side_effect=isolated_client):
+            self.assertEqual(client.post(endpoint, None, {"method": "tools/list"}), (401, None))
+            self.assertEqual(client.post(endpoint, "synthetic-token", {"method": "initialize"}), (307, None))
+            self.assertEqual(client.post(endpoint, "synthetic-token", {"method": "initialize"}),
+                             (200, {"jsonrpc": "2.0", "id": 2, "result": {}}))
+        self.assertEqual(len(requests), 3)
+        self.assertTrue(all(request.method == "POST" and str(request.url) == endpoint for request in requests))
+        self.assertTrue(all(cfg == {"timeout": 15.0, "follow_redirects": False, "trust_env": False}
+                            for cfg in options))
+        self.assertNotIn("authorization", requests[0].headers)
+        self.assertEqual(requests[1].headers.get("authorization"), "Bearer synthetic-token")
+        self.assertEqual(requests[1].headers.get("mcp-protocol-version"), client.PROTOCOL)
+
+    def test_httpx2_rejects_oversized_or_non_json(self):
+        import httpx2
+
+        original_client = httpx2.Client
+        responses = [
+            httpx2.Response(200, headers={"Content-Type": "application/json"}, content=b"x" * (client.MAX_RESPONSE + 1)),
+            httpx2.Response(200, headers={"Content-Type": "text/html"}, content=b"not-json"),
+        ]
+        def isolated_client(**kwargs):
+            return original_client(transport=httpx2.MockTransport(lambda request: responses.pop(0)), **kwargs)
+        with patch.object(httpx2, "Client", side_effect=isolated_client):
+            with self.assertRaisesRegex(client.ProbeError, "response-too-large"):
+                client.post("https://mcp.example.invalid/mcp", None, {"method": "tools/list"})
+            with self.assertRaisesRegex(client.ProbeError, "expected-json-response"):
+                client.post("https://mcp.example.invalid/mcp", None, {"method": "tools/list"})
+
+    def test_direct_post_rejects_non_https_or_query(self):
+        for url in ("http://mcp.example.invalid/mcp", "https://mcp.example.invalid/mcp?debug=1"):
+            with self.assertRaisesRegex(client.ProbeError, "invalid-endpoint"):
+                client.post(url, None, {"method": "tools/list"})
 
     def test_sources_and_tool_errors_are_not_silently_accepted(self):
         for result in ({"isError": True}, {"content": []}, {"content": [{"type": "text", "text": "invalid"}]}):
