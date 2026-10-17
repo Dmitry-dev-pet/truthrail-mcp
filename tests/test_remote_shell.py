@@ -142,5 +142,19 @@ class BashTests(unittest.TestCase):
             self.assertEqual(result["stderr"], "")
 
 
+
+class McpRegistrationTests(unittest.TestCase):
+    def test_exact_two_mcp_tools_are_registered(self):
+        import asyncio
+        from experiments.remote_shell.mcp_adapter import make_server
+        mcp = make_server("http://127.0.0.1:8768", AGENT_TOKEN)
+        tools = asyncio.run(mcp.list_tools())
+        self.assertEqual({item.name for item in tools}, {"terminal_wait", "terminal_reply"})
+        schemas = {item.name: item.input_schema for item in tools}
+        self.assertIn("wait_seconds", schemas["terminal_wait"]["properties"])
+        self.assertIn("command_id", schemas["terminal_reply"]["properties"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
