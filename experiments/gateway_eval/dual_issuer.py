@@ -37,9 +37,12 @@ def main(output_dir):
 
     def issue(name, key, issuer, subject, aud, scopes, expire=180):
         now = int(time.time())
+        # For intentionally expired test credentials use internally
+        # consistent historical iat/nbf/exp, not exp earlier than iat.
+        issued_at = now if expire > 0 else now + expire - 60
         token = jwt.encode({
             "iss": BASE + "/" + issuer, "aud": aud, "sub": subject,
-            "scopes": scopes, "iat": now, "nbf": now - 1,
+            "scopes": scopes, "iat": issued_at, "nbf": issued_at - 1,
             "exp": now + expire,
         }, key, algorithm="RS256",
             headers={"kid": issuer + "-ci-key"})
@@ -52,7 +55,7 @@ def main(output_dir):
     issue("owner_wrong_audience.jwt", owner_key, "owner", "approved-owner",
           EXTERNAL_AUD, ["alfred:owner"])
     issue("owner_expired.jwt", owner_key, "owner", "approved-owner",
-          OWNER_AUD, ["alfred:owner"], -10)
+          OWNER_AUD, ["alfred:owner"], -300)
 
     issue("external_writer.jwt", external_key, "external", "external-writer",
           EXTERNAL_AUD,
@@ -67,7 +70,7 @@ def main(output_dir):
     issue("external_wrong_audience.jwt", external_key, "external",
           "external-reader", OWNER_AUD, ["chat:status"])
     issue("external_expired.jwt", external_key, "external",
-          "external-reader", EXTERNAL_AUD, ["chat:status"], -10)
+          "external-reader", EXTERNAL_AUD, ["chat:status"], -300)
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
