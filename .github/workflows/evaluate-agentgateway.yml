@@ -1,0 +1,129 @@
+name: Evaluate agentgateway v1.6.0 independently of VPS
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/evaluate-agentgateway.yml"
+      - "experiments/gateway_eval/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local-agentgateway:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the same MCP v2 SDK as the current public project
+        run: python -m pip install --disable-pip-version-check -r requirements-shared.txt
+      - name: Download and verify exact official agentgateway v1.6.0 binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/agentgateway/agentgateway/releases/download/v1.6.0/agentgateway-linux-amd64 \
+            --output "$RUNNER_TEMP/agentgateway"
+          echo "496ed27e6a96b55a9ad7cabe5c2be7172511f44a3cb113e533d22bf93a7f079d  $RUNNER_TEMP/agentgateway" | sha256sum -c -
+          chmod 700 "$RUNNER_TEMP/agentgateway"
+      - name: Run only local synthetic MCP + scoped JWT/hot-policy probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m experiments.gateway_eval.smoke "$RUNNER_TEMP/agentgateway"
+
+      - name: Test isolated Agentgateway + minimal shared Peer Chat, no Atlas
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m experiments.gateway_eval.peer_smoke "$RUNNER_TEMP/agentgateway"
+
+
+      - name: Prove external token cannot enter GPT owner gateway route
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m experiments.gateway_eval.cross_ingress_smoke "$RUNNER_TEMP/agentgateway"
+
+      - name: Build disposable one-image Agentgateway and Peer Chat (no Atlas)
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/alfred-peer-image"
+          mkdir -p "$work"
+          cp "$RUNNER_TEMP/agentgateway" "$work/agentgateway"
+          cp experiments/gateway_eval/peer_backend.py "$work/peer_backend.py"
+          cp experiments/gateway_eval/package/Dockerfile "$work/Dockerfile"
+          cp experiments/gateway_eval/package/entrypoint.sh "$work/entrypoint.sh"
+          docker build --tag alfred-peer-only:hosted-test "$work"
+          bash experiments/gateway_eval/package/smoke_container.sh alfred-peer-only:hosted-test
+      - name: Verify separate native/external NICs with no cross-network reachability
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash experiments/gateway_eval/package/smoke_network_isolation.sh alfred-peer-only:hosted-test
+
+      - name: One running image with BOTH JWT auth and private network segregation
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/alfred-combined-gateway-fixture"
+          mkdir -p "$work"
+          cp experiments/gateway_eval/dual_issuer.py "$work/dual_issuer.py"
+          cp experiments/gateway_eval/combined_auth_client.py "$work/combined_auth_client.py"
+          cp experiments/gateway_eval/package/ci_combined_entrypoint.sh "$work/ci_combined_entrypoint.sh"
+          cp experiments/gateway_eval/package/Dockerfile.combined-ci "$work/Dockerfile"
+          docker build --tag alfred-combined-auth:hosted-test "$work"
+          bash experiments/gateway_eval/package/smoke_combined_auth_network.sh alfred-peer-only:hosted-test alfred-combined-auth:hosted-test
+
+
+
+  pinned-openai-tunnel-native-header:
+    name: Verify pinned existing OpenAI tunnel-client auth header routing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout official OpenAI tunnel-client v0.0.16 exactly
+        uses: actions/checkout@v4
+        with:
+          repository: openai/tunnel-client
+          ref: 5f99daabd4aa4a77049e6d81d54a0d8c18335397
+          path: .tunnel-client
+          persist-credentials: false
+      - name: Install Go version declared by the pinned official source
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: .tunnel-client/go.mod
+          cache: true
+          cache-dependency-path: .tunnel-client/go.sum
+      - name: Verify the pinned tag matches the reviewed source and no private credentials
+        working-directory: .tunnel-client
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 5f99daabd4aa4a77049e6d81d54a0d8c18335397
+          grep -q '^go 1.27.0$' go.mod
+          test -f e2e/static_headers_e2e_test.go
+          grep -q 'TestMCPStaticHeadersE2E' e2e/static_headers_e2e_test.go
+          grep -q 'TestChannelTransportFactoryConnectorAuthorizationOverridesStaticHeader' pkg/mcpclient/channel_transport_factory_test.go
+      - name: Run official HTTP MCP static header origin and connector override tests
+        working-directory: .tunnel-client
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./pkg/mcpclient -run '^(TestChannelTransportFactoryScopesStaticAuthorizationPerBinding|TestChannelTransportFactoryConnectorAuthorizationOverridesStaticHeader|TestChannelHTTPClientScopesStaticAndForwardedAuthorizationHeaders)$' -count=1 -timeout=120s
+      - name: Run original official local mock tunnel-service end-to-end header test
+        working-directory: .tunnel-client
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./e2e -run '^TestMCPStaticHeadersE2E$' -count=1 -timeout=180s
+          echo 'tunnel_client=v0.0.16; static_backend_header_is_origin_scoped=true; connector_header_overrides=true; real_tunnel_id_used=false; vps_changed=false' >> "$GITHUB_STEP_SUMMARY"

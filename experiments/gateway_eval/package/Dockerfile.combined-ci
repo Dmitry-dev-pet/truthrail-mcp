@@ -1,0 +1,13 @@
+# OFF-VPS CI ONLY. Contains an EPHEMERAL JWT issuer.
+# NEVER publish or deploy this fixture as production.
+FROM alfred-peer-only:hosted-test
+USER root
+COPY dual_issuer.py /app/dual_issuer.py
+COPY combined_auth_client.py /app/combined_auth_client.py
+COPY ci_combined_entrypoint.sh /usr/local/bin/alfred-combined-ci-start
+RUN chmod 0444 /app/dual_issuer.py /app/combined_auth_client.py \
+ && chmod 0555 /usr/local/bin/alfred-combined-ci-start
+ENV PYTHONPATH=/app
+USER 10001:10001
+HEALTHCHECK NONE
+ENTRYPOINT ["/usr/local/bin/alfred-combined-ci-start"]
