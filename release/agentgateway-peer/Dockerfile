@@ -12,7 +12,7 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 RUN set -eux; \
     test "$(uname -m)" = x86_64; \
-    python -m pip install --no-cache-dir --disable-pip-version-check 'mcp==2.3.0'; \
+    python -m pip install --no-cache-dir --disable-pip-version-check 'mcp==2.3.0' 'PyYAML==6.0.3'; \
     groupadd --system --gid 10001 alfred; \
     useradd --system --uid 10001 --gid 10001 --no-create-home --home-dir /tmp alfred
 RUN python - <<'PY'
