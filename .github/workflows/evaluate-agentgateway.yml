@@ -44,6 +44,13 @@ jobs:
           set -euo pipefail
           python -m experiments.gateway_eval.peer_smoke "$RUNNER_TEMP/agentgateway"
 
+
+      - name: Prove external token cannot enter GPT owner gateway route
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m experiments.gateway_eval.cross_ingress_smoke "$RUNNER_TEMP/agentgateway"
+
       - name: Build disposable one-image Agentgateway and Peer Chat (no Atlas)
         shell: bash
         run: |

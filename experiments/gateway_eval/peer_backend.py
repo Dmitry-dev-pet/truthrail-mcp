@@ -218,6 +218,16 @@ async def chat_close(room_id: str, ticket: str) -> dict:
     return guarded(mailbox.close, room_id, ticket)
 
 
+# Only for the explicit off-VPS owner-versus-external trust-boundary test:
+# an inert extra tool represents a reviewed owner-only Alfred capability.
+# Not part of the default Peer Chat server / packed release.
+if __import__("os").environ.get("ALFRED_OWNER_ONLY_FIXTURE") == "1":
+    @server.tool()
+    async def owner_marker() -> dict:
+        """Inert synthetic marker for verifying owner-only tool protection."""
+        return {"synthetic": True, "marker": "owner-catalog-fixture-only"}
+
+
 if __name__ == "__main__":
     server.run(
         transport="streamable-http", host="127.0.0.1", port=18765,
