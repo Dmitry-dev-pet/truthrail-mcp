@@ -62,7 +62,7 @@ jobs:
             -t alfred-agentgateway-core:release-verification .
           docker image inspect alfred-agentgateway-core:release-verification \
             --format '{{index .Config.Labels "alfred.release_role"}} {{index .Config.Labels "org.opencontainers.image.revision"}} {{.Config.User}}' \
-            | grep -qx "agentgateway-peer-core-no-issuer $GITHUB_SHA 10001:10001"
+            | grep -qx "agentgateway-peer-core-native-owner-key $GITHUB_SHA 10001:10001"
       - name: Real HTTP MCP strict JWT and private network acceptance, no VPS
         shell: bash
         run: |
@@ -102,7 +102,7 @@ jobs:
           import json,os,sys
           c=json.load(sys.stdin)
           labels=c["Labels"]
-          assert labels["alfred.release_role"]=="agentgateway-peer-core-no-issuer"
+          assert labels["alfred.release_role"]=="agentgateway-peer-core-native-owner-key"
           assert labels["org.opencontainers.image.revision"]==os.environ["EXPECTED_SOURCE"]
           assert labels["alfred.gateway_binary_sha256"]=="496ed27e6a96b55a9ad7cabe5c2be7172511f44a3cb113e533d22bf93a7f079d"
           assert c["User"]=="10001:10001"
