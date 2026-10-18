@@ -47,12 +47,13 @@ def local_query_backend(query: Any) -> Backend:
     return call
 
 
-def make_embedded_server(query: Any):
-    """One MCPServer: five Atlas tools, no captions or private Archigos."""
+def make_embedded_server(query: Any, *, peer_chat_enabled: bool = False):
+    """One MCPServer: five Atlas tools, optional ephemeral peer chat, no Archigos."""
     return make_server(
         _atlas_backend=local_query_backend(query),
         captions_enabled=False,
         caption_url=None,
+        peer_chat_enabled=peer_chat_enabled,
     )
 
 
@@ -71,7 +72,10 @@ def main() -> None:
         raise SystemExit("atlas-sqlite-path-missing")
     # The combined private image owns the exact AtlasQuery module and SQLite.
     from scripts.atlas_mcp_query import AtlasQuery
-    make_embedded_server(AtlasQuery(Path(db_path))).run(
+    make_embedded_server(
+        AtlasQuery(Path(db_path)),
+        peer_chat_enabled=os.environ.get("ALFRED_PEER_CHAT_MCP_ENABLED") == "1",
+    ).run(
         transport="streamable-http", host=host, port=port,
         stateless_http=True, json_response=True, max_request_body_size=16384,
     )
