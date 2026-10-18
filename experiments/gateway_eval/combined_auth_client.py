@@ -130,14 +130,39 @@ async def wait_ready(url: str, bearer: str, expected: str):
                 return
         except Exception as exc:
             # No exception strings, response bodies, URLs or credentials.
-            last_type = type(exc).__name__
-            response = getattr(exc, "response", None)
-            status = getattr(response, "status_code", None)
-            last_status = str(status) if type(status) is int else "unavailable"
+            classes = []
+            codes = []
+            def visit(err, depth=0):
+                if depth > 5 or len(classes) >= 14:
+                    return
+                classes.append(type(err).__name__)
+                response = getattr(err, "response", None)
+                status = getattr(response, "status_code", None)
+                if type(status) is int:
+                    codes.append(str(status))
+                for child in getattr(err, "exceptions", ()):
+                    visit(child, depth + 1)
+                cause = getattr(err, "__cause__", None)
+                if cause is not None:
+                    visit(cause, depth + 1)
+            visit(exc)
+            last_type = "/".join(classes)
+            last_status = ",".join(codes) if codes else "unavailable"
         await asyncio.sleep(.15)
+    probe_status = "unavailable"
+    try:
+        async with httpx2.AsyncClient(
+            headers={"Authorization": "Bearer " + bearer},
+            timeout=2.0, trust_env=False
+        ) as http:
+            response = await http.get(url)
+            probe_status = str(response.status_code)
+    except Exception as exc:
+        probe_status = type(exc).__name__
     raise RuntimeError("gateway-listener-unavailable:" + expected +
                        ":failure_class=" + last_type +
                        ":http_status=" + last_status +
+                       ":http_get_status=" + probe_status +
                        ":visible_tools=" + str(last_visible))
 
 
