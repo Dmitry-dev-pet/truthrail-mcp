@@ -1,0 +1,142 @@
+# GHCR release for Alfred Agentgateway core. Publishing is separate from
+# deployment; only reviewed main commits may create immutable SHA tags.
+name: Publish Alfred Agentgateway core (no-issuer)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/publish-agentgateway-core.yml"
+      - "release/agentgateway-peer/**"
+      - "alfred_gateway_core/**"
+      - "tests/test_agentgateway_runtime.py"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/publish-agentgateway-core.yml"
+      - "release/agentgateway-peer/**"
+      - "alfred_gateway_core/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agentgateway-core-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check reviewed source and Python policy tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check 'mcp==2.3.0' 'PyYAML==6.0.3'
+          python -m unittest discover -s tests -p test_agentgateway_runtime.py -v
+          python -m compileall -q alfred_gateway_core/
+          test -f release/agentgateway-peer/ci/smoke_production.sh
+          ! grep -R -E 'dual_issuer|ALFRED_CI_TEST_ONLY|owner_marker|CONTROL_PLANE_API_KEY' \
+            alfred_gateway_core/ release/agentgateway-peer/entrypoint.sh
+      - name: Build pinned non-root candidate without any signing credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull --build-arg SOURCE_SHA="$GITHUB_SHA" \
+            -f release/agentgateway-peer/Dockerfile \
+            -t alfred-agentgateway-core:release-verification .
+          docker image inspect alfred-agentgateway-core:release-verification \
+            --format '{{index .Config.Labels "alfred.release_role"}} {{index .Config.Labels "org.opencontainers.image.revision"}} {{.Config.User}}' \
+            | grep -qx "agentgateway-peer-core-no-issuer $GITHUB_SHA 10001:10001"
+      - name: Real HTTP MCP strict JWT and private network acceptance, no VPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash release/agentgateway-peer/ci/smoke_production.sh alfred-agentgateway-core:release-verification
+          echo "release_verify=success; real_vps_changed=false; cloudflare_changed=false; no_runtime_credential_created=true" >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 22
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build exact reviewed main source with immutable SHA tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          image="ghcr.io/dmitry-dev-pet/alfred-agentgateway-core:$GITHUB_SHA"
+          docker build --pull --build-arg SOURCE_SHA="$GITHUB_SHA" \
+            -f release/agentgateway-peer/Dockerfile -t "$image" .
+          docker image inspect "$image" --format '{{json .Config}}' |
+            EXPECTED_SOURCE="$GITHUB_SHA" python3 -c '
+          import json,os,sys
+          c=json.load(sys.stdin)
+          labels=c["Labels"]
+          assert labels["alfred.release_role"]=="agentgateway-peer-core-no-issuer"
+          assert labels["org.opencontainers.image.revision"]==os.environ["EXPECTED_SOURCE"]
+          assert labels["alfred.gateway_binary_sha256"]=="496ed27e6a96b55a9ad7cabe5c2be7172511f44a3cb113e533d22bf93a7f079d"
+          assert c["User"]=="10001:10001"
+          assert c["Entrypoint"]==["/usr/local/bin/alfred-peer-start"]
+          '
+      - name: Repeat real no-issuer HTTP/JWT + two-NIC tests before write credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="ghcr.io/dmitry-dev-pet/alfred-agentgateway-core:$GITHUB_SHA"
+          bash release/agentgateway-peer/ci/smoke_production.sh "$image"
+      - name: Acquire ONLY short-lived GHCR package-write authorization
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$REGISTRY_TOKEN"
+          echo "::add-mask::$REGISTRY_TOKEN"
+          printf '%s' "$REGISTRY_TOKEN" |
+            docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin >/dev/null
+      - name: Publish full immutable commit SHA and verify digest remotely
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="ghcr.io/dmitry-dev-pet/alfred-agentgateway-core:$GITHUB_SHA"
+          docker push "$image" > "$RUNNER_TEMP/alfred-image-push.log"
+          digest="$(tail -n 1 "$RUNNER_TEMP/alfred-image-push.log" |
+            grep -oE 'sha256:[0-9a-f]{64}' | head -n 1)"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          actual="$(timeout 90s docker buildx imagetools inspect "$image" |
+            sed -n 's/^Digest:[[:space:]]*//p' | head -n 1)"
+          test "$actual" = "$digest"
+          {
+            echo '### Alfred Agentgateway Core v1 — published immutable release'
+            echo "release_image=$image"
+            echo "release_manifest_digest=$digest"
+            echo "release_source_commit=$GITHUB_SHA"
+            echo 'release_contains_signing_key=false; production_deployed=false'
+            echo 'old_atlas_unchanged=true; openai_tunnel_unchanged=true'
+            echo 'separate_operator_owner_approval_required=true'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove disposable GHCR login material
+        if: always()
+        shell: bash
+        run: docker logout ghcr.io >/dev/null 2>&1 || true
