@@ -6,6 +6,7 @@ this process and are never written to disk or printed in CI output.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -15,12 +16,18 @@ import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 BASE = "http://127.0.0.1:18767"
-OWNER_AUD = "http://127.0.0.1:18766/mcp"
-EXTERNAL_AUD = "http://127.0.0.1:18769/mcp"
+# Override allowed only in a disposable integration fixture to align the JWT
+# resource audience with two fixed, private NIC URLs inside a Docker network.
+OWNER_AUD = os.environ.get("ALFRED_CI_OWNER_AUD", "http://127.0.0.1:18766/mcp")
+EXTERNAL_AUD = os.environ.get("ALFRED_CI_EXTERNAL_AUD", "http://127.0.0.1:18769/mcp")
 
 
 def main(output_dir):
     folder = Path(output_dir)
+    if not OWNER_AUD.startswith("http://127.0.0.1:18766/") and OWNER_AUD != "http://172.30.143.10:8765/mcp":
+        raise SystemExit("invalid_test_owner_audience")
+    if not EXTERNAL_AUD.startswith("http://127.0.0.1:18769/") and EXTERNAL_AUD != "http://172.30.144.10:8766/mcp":
+        raise SystemExit("invalid_test_external_audience")
     folder.mkdir(mode=0o700, parents=True, exist_ok=True)
     owner_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     external_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
