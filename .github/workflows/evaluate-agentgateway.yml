@@ -69,6 +69,20 @@ jobs:
           set -euo pipefail
           bash experiments/gateway_eval/package/smoke_network_isolation.sh alfred-peer-only:hosted-test
 
+      - name: One running image with BOTH JWT auth and private network segregation
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/alfred-combined-gateway-fixture"
+          mkdir -p "$work"
+          cp experiments/gateway_eval/dual_issuer.py "$work/dual_issuer.py"
+          cp experiments/gateway_eval/combined_auth_client.py "$work/combined_auth_client.py"
+          cp experiments/gateway_eval/package/ci_combined_entrypoint.sh "$work/ci_combined_entrypoint.sh"
+          cp experiments/gateway_eval/package/Dockerfile.combined-ci "$work/Dockerfile"
+          docker build --tag alfred-combined-auth:hosted-test "$work"
+          bash experiments/gateway_eval/package/smoke_combined_auth_network.sh alfred-peer-only:hosted-test alfred-combined-auth:hosted-test
+
+
 
   pinned-openai-tunnel-native-header:
     name: Verify pinned existing OpenAI tunnel-client auth header routing
