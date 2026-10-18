@@ -164,7 +164,16 @@ test "$ready" = true
 
 # One live deployment: verify BOTH strict auth policies, BOTH actual MCP
 # listeners, three B<->A round trips and every wrong-token denial.
-docker exec "$name" python /app/combined_auth_client.py all
+if ! docker exec "$name" python /app/combined_auth_client.py all; then
+  echo "combined_auth_probe_failed" >&2
+  docker inspect --format 'combined_after_probe_running={{.State.Running}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}}' "$name" >&2
+  # Only fixed test-source log lines, sanitized and bounded.
+  docker logs --tail 80 "$name" 2>&1 |
+    grep -Ei 'auth|invalid|unauthorized|jwks|JWT|permission|error|warn|failed|panic|combined_ci_child_exited|listening|bind|mcp' |
+    sed -E 's/(Bearer )[A-Za-z0-9._~+\/-]+/\1[REDACTED]/g' |
+    tail -25 >&2 || true
+  exit 1
+fi
 
 # Copy ONLY ephemeral synthetic test JWTs from container tmpfs into a
 # local temp folder for independent network-namespace client probes.
