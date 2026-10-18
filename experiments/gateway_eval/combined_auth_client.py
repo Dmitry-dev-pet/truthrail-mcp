@@ -313,15 +313,21 @@ async def verify_network_client(role: str, root: str):
     # TCP errors here prove network isolation separately from JWT rules.
     destination = OWNER_IP if role == "external" else EXTERNAL_IP
     port = 8765 if role == "external" else 8766
-    with socket.socket() as s:
-        s.settimeout(1.0)
-        try:
-            connected = s.connect_ex((destination, port)) == 0
-        except OSError:
-            connected = False
-    assert not connected, "cross_network_port_reachable"
+    on_own_nic = OWNER_IP if role == "owner" else EXTERNAL_IP
+    for case, address, port_to_check in [
+        ("foreign-nic", destination, port),
+        ("private-backend", on_own_nic, 18765),
+        ("other-port-own-nic", on_own_nic, port),
+    ]:
+        with socket.socket() as s:
+            s.settimeout(1.0)
+            try:
+                connected = s.connect_ex((address, port_to_check)) == 0
+            except OSError:
+                connected = False
+        assert not connected, "forbidden-network-connection:" + case
     print(json.dumps({"network_probed": role, "valid_mcp_authorized": True,
-                      "other_network_tcp_denied": True}))
+                      "denied_tcp_cases": 3}))
 
 
 def main():
