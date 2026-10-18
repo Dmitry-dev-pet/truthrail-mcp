@@ -25,6 +25,28 @@ Mac window B: ChatGPT ─┘                            │
                                     └─ opt-in in-memory chat, 4 tools
 ```
 
+## Simplified initial scope (owner decision, 18 Oct 2026)
+
+The first A/B experiment intentionally **does not use** the separately
+proposed Agentgateway core, a custom RSA/JWKS issuer, rotating owner JWTs
+or new Python dependencies installed on the VPS. The working OpenAI
+Secure MCP Tunnel already supplies the private network entrypoint and
+the ChatGPT custom-app access boundary. This is deliberately different
+from a future Cloudflare/external-agent deployment, which needs its own
+per-client authentication and authorization.
+
+The peer room ID is a shared bearer capability, not a cryptographic
+assertion that the calling ChatGPT tab is A or B. Only use temporary
+non-sensitive conversation text in this initial test; either holder of
+a room ID can claim either role. Never expose a room ID in public logs,
+Issues or repository source. For later external agents, implement
+per-role tickets or a separately authenticated edge before reuse.
+
+An MCP `chat_wait` can block for up to twenty seconds and return when
+another session sends a message. It cannot force ChatGPT to initiate
+another tool call, keep its turn open indefinitely or suppress approval
+prompts. Record those limitations in real two-session acceptance.
+
 ## Activation contract
 
 - Default `ALFRED_PEER_CHAT_MCP_ENABLED` unset: exactly five Atlas tools
