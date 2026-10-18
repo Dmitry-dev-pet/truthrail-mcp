@@ -1,0 +1,49 @@
+# Public, source-only experiment. NO VPS/Cloudflare/tunnel/issuer access.
+name: Verify native ChatGPT owner header without a custom JWT issuer
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/verify-native-owner-apikey.yml"
+      - "experiments/native_owner_apikey/**"
+
+permissions:
+  contents: read
+
+jobs:
+  native-owner-apikey-off-vps:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Reject fixture production secrets and unintended executable tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile experiments/native_owner_apikey/probe.py
+          bash -n experiments/native_owner_apikey/smoke.sh
+          ! grep -E 'docker.sock|ssh |sudo |CONTROL_PLANE_API_KEY|OPENAI_API_KEY|CLOUDFLARE_API_TOKEN|real_owner_jwt' \
+            experiments/native_owner_apikey/probe.py \
+            experiments/native_owner_apikey/smoke.sh
+      - name: Build the already reviewed pinned Agentgateway 1.6.0 core WITHOUT signing keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull \
+            --build-arg SOURCE_SHA="$GITHUB_SHA" \
+            -f release/agentgateway-peer/Dockerfile \
+            -t alfred-agentgateway:native-apikey-off-vps .
+          docker image inspect alfred-agentgateway:native-apikey-off-vps \
+            --format '{{index .Config.Labels "alfred.gateway_binary"}} {{.Config.User}}' \
+            | grep -qx 'agentgateway-v1.6.0 10001:10001'
+      - name: Test SHA256 owner API key and custom header on real MCP route
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash experiments/native_owner_apikey/smoke.sh alfred-agentgateway:native-apikey-off-vps
+          echo "owner_transport=custom_header; owner_identity=apiKey_role_owner; no_JWT_issuer=true; existing_tunnel_untouched=true" >> "$GITHUB_STEP_SUMMARY"
