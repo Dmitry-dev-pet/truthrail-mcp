@@ -85,6 +85,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install exact test-only MCP SDK and JWT generator dependencies
+        run: |
+          python -m pip install --disable-pip-version-check 'mcp==2.3.0' 'PyYAML==6.0.3'
       - name: Build exact reviewed main source with immutable SHA tag
         shell: bash
         run: |
