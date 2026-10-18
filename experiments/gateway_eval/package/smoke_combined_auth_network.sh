@@ -131,7 +131,15 @@ docker inspect --format '{{.State.Running}} {{.HostConfig.Memory}} {{.HostConfig
 ready=false
 for _ in $(seq 1 90); do
   if ! [ "$(docker inspect --format '{{.State.Running}}' "$name")" = true ]; then
-    echo "test_gateway_not_running" >&2; exit 1
+    echo "test_gateway_not_running" >&2
+    # Prints ONLY sanitised, fixed error-class lines, never test JWTs,
+    # headers, request bodies, file contents, or raw application output.
+    docker inspect --format 'fixture_exit_code={{.State.ExitCode}} fixture_oom={{.State.OOMKilled}}' "$name" >&2
+    docker logs --tail 36 "$name" 2>&1 |
+      grep -E 'Traceback|ModuleNotFoundError|ImportError|SyntaxError|invalid_test_|ERROR|Error|error|blocked_|combined_ci_child_exited|oom|panic|permission denied' |
+      sed -E 's/(Bearer )[A-Za-z0-9._~+\/-]+/\1[REDACTED]/g' |
+      tail -12 >&2 || true
+    exit 1
   fi
   if docker exec "$name" test -s /tmp/ephemeral_tokens/owner.jwt >/dev/null 2>&1 &&
      docker exec "$name" test -s /tmp/ephemeral_tokens/external_writer.jwt >/dev/null 2>&1; then
