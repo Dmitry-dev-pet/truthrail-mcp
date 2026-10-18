@@ -179,7 +179,14 @@ fi
 # local temp folder for independent network-namespace client probes.
 # Never echo them to logs or publish them as a CI artifact.
 mkdir -m 0700 "$tmp/tokens"
-docker cp "$name:/tmp/ephemeral_tokens/." "$tmp/tokens/" >/dev/null
+# Docker cp does not reliably read container tmpfs mounts from the Engine's
+# overlay view. Stream synthetic JWT files from the running container through
+# an in-memory tar pipe directly into the short-lived runner directory.
+# The bytes never pass through GitHub logs, a command argument or an artifact.
+docker exec "$name" python -c "import sys,tarfile; t=tarfile.open(fileobj=sys.stdout.buffer,mode='w|'); t.add('/tmp/ephemeral_tokens',arcname='.'); t.close()" |
+  tar -C "$tmp/tokens" -xf -
+test -s "$tmp/tokens/owner.jwt"
+test -s "$tmp/tokens/external_writer.jwt"
 chmod 0700 "$tmp/tokens"
 chmod 0600 "$tmp/tokens/"*.jwt
 
