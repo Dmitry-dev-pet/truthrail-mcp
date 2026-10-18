@@ -118,15 +118,27 @@ async def denied_tool(client, tool: str, arguments: dict | None = None):
 
 
 async def wait_ready(url: str, bearer: str, expected: str):
+    last_type = "not_attempted"
+    last_visible = 0
+    last_status = "unknown"
     for _ in range(70):
         try:
             names = await listing(url, bearer)
+            last_visible = len(names)
+            last_type = "tool_list_incomplete"
             if has_tool(names, expected):
                 return
-        except Exception:
-            pass
+        except Exception as exc:
+            # No exception strings, response bodies, URLs or credentials.
+            last_type = type(exc).__name__
+            response = getattr(exc, "response", None)
+            status = getattr(response, "status_code", None)
+            last_status = str(status) if type(status) is int else "unavailable"
         await asyncio.sleep(.15)
-    raise RuntimeError("gateway-listener-unavailable:" + expected)
+    raise RuntimeError("gateway-listener-unavailable:" + expected +
+                       ":failure_class=" + last_type +
+                       ":http_status=" + last_status +
+                       ":visible_tools=" + str(last_visible))
 
 
 async def verify_owner_external():
