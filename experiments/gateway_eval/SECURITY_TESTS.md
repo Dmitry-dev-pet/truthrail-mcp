@@ -60,3 +60,40 @@ No real Cloudflare/ChatGPT tunnel, user token, secret or VPS is used.
 network topology on a disposable runner, not the exact future production
 Docker Compose networks or Cloudflare VPC service. The separately tested
 two-issuer JWT scopes and routes must BOTH remain enforced in production.
+
+
+## Verified CI results — 18 October 2026
+
+- Head revision `c40f1def8f29dab8b801cb60777f437b775febd0`.
+- [Gateway/source test run 39082440906](https://github.com/Dmitry-dev-pet/truthrail-mcp/actions/runs/39082440906):
+  two jobs PASS (gateway and independently pinned upstream tunnel-client test).
+- [Public source run 39082440515](https://github.com/Dmitry-dev-pet/truthrail-mcp/actions/runs/39082440515):
+  all seven project tests PASS.
+- ONE real Agentgateway v1.6.0 with TWO named listeners and distinct
+  ephemeral RSA signing keys and JWT issuers/audiences:
+  owner`7/7` tools allowed, external writer`4/7`,
+  external observer`1/7`. Ten missing/wrong-cross-route/wrong-audience/
+  expired/bad-signature token probes rejected, guessed owner-only
+  `tools/call` denied, forged role headers ignored. Revoking
+  `chat_send` only on external route leaves owner authorized; hot
+  rollback retains both processes and a shared room.
+- The first cross-ingress run **intentionally failed** for a near-expired
+  token (expired 10s before the test): agentgateway allows ~60s clock
+  tolerance as documented for JWTs. The test now issues logically
+  consistent JWTs expired **300s before** the current clock and verifies
+  they are rejected. Do not interpret the 60s skew grace as immediate
+  revocation; very short token TTLs need design review.
+- Separate **disposable two-NIC network fixture**:
+  two internal-only Docker bridge networks; both allowed TCP connections
+  work; SIX attempts to access the other NIC/port or direct backend
+  are denied. No host ports exposed; backend stays loopback-only
+  inside the same container, running with UID/GID 10001 and read-only
+  root filesystem. This fixture deliberately lacks JWT and MUST NOT
+  be copied to a production environment.
+- The above are **two independent acceptance experiments**, not one
+  combined production deployment. Combining exact private NIC binding,
+  native-tunnel authentication, external scoped OAuth, no public
+  owner-route connectivity and role-ticket authorization in a single
+  real Docker Compose deployment is STILL NOT TESTED.
+- No VPS, Cloudflare, OpenAI tunnel, production keys or user tokens
+  were changed. No real external agent was given credentials or access.
