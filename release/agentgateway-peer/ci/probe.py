@@ -186,12 +186,32 @@ async def actor(role):
                 assert result2["status"] == "closed"
                 publish("closed.json", {"ok": True})
             else:
-                await expected_auth_refusal(EXTERNAL_URL, local_token("owner.key"))
+                await expected_auth_refusal(
+                    EXTERNAL_URL, local_token("owner.key"), owner_custom=True
+                )
                 await expected_auth_refusal(EXTERNAL_URL, local_token("external_bad_aud.jwt"))
                 await expected_auth_refusal(EXTERNAL_URL, local_token("external_expired.jwt"))
                 await expected_auth_refusal(EXTERNAL_URL, None)
                 await denied(c, "peer-chat_chat_create")
                 await denied(c, "peer-chat_chat_close")
+                # Verify a second external JWT has its OWN, strictly smaller
+                # tool scope. An external token claiming alfred:owner remains
+                # external: never allow it to inherit native owner tools.
+                for candidate in ("external_reader.jwt", "external_claims_owner.jwt"):
+                    async with httpx2.AsyncClient(
+                        headers={"Authorization": "Bearer " + local_token(candidate)},
+                        timeout=httpx2.Timeout(8.0, read=20.0),
+                        trust_env=False,
+                    ) as limited_http:
+                        async with Client(streamable_http_client(
+                            EXTERNAL_URL, http_client=limited_http,
+                        ), raise_exceptions=True) as limited:
+                            visible = [t.name for t in (await limited.list_tools()).tools]
+                            assert len(visible) == 1
+                            assert full_name(visible, "chat_status")
+                            await denied(limited, "peer-chat_chat_send")
+                            await denied(limited, "peer-chat_chat_create")
+                            await denied(limited, "peer-chat_chat_close")
                 room = await load("room.json")
                 joined = unpack(await c.call_tool(full_name(names, "chat_join"), {
                     "room_id": room["room_id"], "invitation": room["b_invite"],
