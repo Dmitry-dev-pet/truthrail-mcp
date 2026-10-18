@@ -229,7 +229,34 @@ if __import__("os").environ.get("ALFRED_OWNER_ONLY_FIXTURE") == "1":
 
 
 if __name__ == "__main__":
+    import os
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    # A gateway forwards the original Host to this loopback-only MCP target.
+    # Enforce an exact allowlist; NEVER disable DNS-rebinding protection.
+    # This expanded list exists ONLY for the explicitly isolated hosted CI
+    # two-route Docker fixture and is never enabled by production builds.
+    security = None
+    if (os.environ.get("ALFRED_CI_TEST_ONLY") == "1"
+            and os.environ.get("ALFRED_OWNER_ONLY_FIXTURE") == "1"
+            and os.environ.get("ALFRED_CI_OWNER_AUD") == "http://172.30.143.10:8765/mcp"
+            and os.environ.get("ALFRED_CI_EXTERNAL_AUD") == "http://172.30.144.10:8766/mcp"):
+        security = TransportSecuritySettings(
+            enable_dns_rebinding_protection=True,
+            allowed_hosts=[
+                "127.0.0.1:18765",
+                "172.30.143.10:8765",
+                "172.30.144.10:8766",
+            ],
+            allowed_origins=[
+                "http://127.0.0.1:18765",
+                "http://172.30.143.10:8765",
+                "http://172.30.144.10:8766",
+            ],
+        )
+
     server.run(
         transport="streamable-http", host="127.0.0.1", port=18765,
         stateless_http=True, json_response=True, max_request_body_size=8192,
+        transport_security=security,
     )
