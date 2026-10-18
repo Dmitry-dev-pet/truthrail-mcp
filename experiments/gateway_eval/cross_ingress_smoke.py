@@ -134,12 +134,14 @@ async def tool_names(url, token=None, forged_headers=None) -> list[str]:
         return [t.name for t in (await conn.list_tools()).tools]
 
 
-async def must_reject_connection(url, token=None, forged_headers=None):
+async def must_reject_connection(url, token=None, forged_headers=None, label=""):
     try:
-        await tool_names(url, token, forged_headers)
+        names = await tool_names(url, token, forged_headers)
     except Exception:
         return
-    raise AssertionError("cross-route or missing auth unexpectedly admitted")
+    # No credential or full room message is logged, only the exact case label.
+    raise AssertionError("wrong-identity-admitted:" + label +
+                         ":visible-tool-count=" + str(len(names)))
 
 
 async def must_reject_call(url, token, method, args=None, forged_headers=None):
@@ -231,22 +233,25 @@ async def exercise(owner_token, ext_writer, ext_reader, ext_owner_claim, tokens,
         # this proves each listener's auth denies the WRONG identity,
         # NOT physical network isolation (a separate rollout gate).
         tests = [
-            (OWNER, None),
-            (EXTERNAL, None),
-            (OWNER, ext_writer),
-            (OWNER, ext_owner_claim),
-            (EXTERNAL, owner_token),
-            (OWNER, tokens["owner_wrong_audience.jwt"]),
-            (EXTERNAL, tokens["external_wrong_audience.jwt"]),
-            (OWNER, tokens["owner_expired.jwt"]),
-            (EXTERNAL, tokens["external_expired.jwt"]),
-            (OWNER, ext_writer[:-4] + "oops"),
+            ("no-token-owner", OWNER, None),
+            ("no-token-external", EXTERNAL, None),
+            ("external-writer-to-owner", OWNER, ext_writer),
+            ("external-forged-owner-to-owner", OWNER, ext_owner_claim),
+            ("owner-token-to-external", EXTERNAL, owner_token),
+            ("owner-token-wrong-audience", OWNER,
+             tokens["owner_wrong_audience.jwt"]),
+            ("external-token-wrong-audience", EXTERNAL,
+             tokens["external_wrong_audience.jwt"]),
+            ("expired-owner", OWNER, tokens["owner_expired.jwt"]),
+            ("expired-external", EXTERNAL, tokens["external_expired.jwt"]),
+            ("bad-signature", OWNER, ext_writer[:-4] + "oops"),
         ]
-        for url, tok in tests:
+        for label, url, tok in tests:
             await must_reject_connection(
                 url, tok,
                 {"X-Alfred-Role": "owner", "X-Forwarded-User": "approved-owner",
-                 "X-Forwarded-For": "127.0.0.1"}
+                 "X-Forwarded-For": "127.0.0.1"},
+                label=label
             )
 
         # Both separate listeners still talk to the SAME bounded mailbox.
