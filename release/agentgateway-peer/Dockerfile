@@ -21,12 +21,19 @@ from pathlib import Path
 from urllib.request import urlopen
 source = "https://github.com/agentgateway/agentgateway/releases/download/v1.6.0/agentgateway-linux-amd64"
 expected = "496ed27e6a96b55a9ad7cabe5c2be7172511f44a3cb113e533d22bf93a7f079d"
-with urlopen(source, timeout=45) as response:
-    binary = response.read(64 * 1024 * 1024 + 1)
-if len(binary) > 64 * 1024 * 1024 or sha256(binary).hexdigest() != expected:
-    raise SystemExit("Agentgateway binary digest mismatch")
 target = Path("/usr/local/bin/agentgateway")
-target.write_bytes(binary)
+digest = sha256()
+count = 0
+with urlopen(source, timeout=45) as response, target.open("wb") as output:
+    while chunk := response.read(1024 * 1024):
+        count += len(chunk)
+        if count > 128 * 1024 * 1024:
+            raise SystemExit("Agentgateway binary exceeds size bound")
+        digest.update(chunk)
+        output.write(chunk)
+if digest.hexdigest() != expected:
+    target.unlink(missing_ok=True)
+    raise SystemExit("Agentgateway binary digest mismatch")
 target.chmod(0o755)
 PY
 COPY alfred_gateway_core/ /app/alfred_gateway_core/
