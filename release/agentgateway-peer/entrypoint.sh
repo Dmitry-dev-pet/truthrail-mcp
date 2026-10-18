@@ -5,7 +5,8 @@ set -Eeuo pipefail
 umask 077
 config=/etc/agentgateway/config.yaml
 owner_pub=/run/alfred-auth/owner-jwks.json
-if [ ! -r "$config" ] || [ ! -r "$owner_pub" ]; then
+approved_targets=/etc/agentgateway/approved-targets.json
+if [ ! -r "$config" ] || [ ! -r "$owner_pub" ] || [ ! -r "$approved_targets" ]; then
   echo "alfred_missing_operator_config_or_owner_jwks" >&2
   exit 42
 fi
@@ -28,6 +29,16 @@ from alfred_gateway_core.transport_security import transport_security
 settings = transport_security()
 assert settings.enable_dns_rebinding_protection
 PY
+# Independently validate strict route scopes, JWT issuer/jwks-file fields,
+# both private listener IPs, and operator-reviewed upstream target inventory.
+# This exact validator must also run before each future atomic policy update.
+if ! python -m alfred_gateway_core.validate_policy \
+    "$config" "$approved_targets" "$owner_pub" \
+    "$(if [ -r /run/alfred-auth/external-jwks.json ]; then echo /run/alfred-auth/external-jwks.json; else echo '-'; fi)" \
+    "$ALFRED_PEER_TRUSTED_HOSTS" >/dev/null; then
+  echo "alfred_strict_policy_gate_denied" >&2
+  exit 45
+fi
 # Gateways must refuse unauthenticated traffic. The signed user/service JWTs
 # are NOT stored here; a tunnel-local header file belongs to tunnel-client.
 if ! /usr/local/bin/agentgateway --validate-only -f "$config" >/dev/null; then
