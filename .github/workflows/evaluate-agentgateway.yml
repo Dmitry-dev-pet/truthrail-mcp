@@ -63,6 +63,11 @@ jobs:
           cp experiments/gateway_eval/package/entrypoint.sh "$work/entrypoint.sh"
           docker build --tag alfred-peer-only:hosted-test "$work"
           bash experiments/gateway_eval/package/smoke_container.sh alfred-peer-only:hosted-test
+      - name: Verify separate native/external NICs with no cross-network reachability
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash experiments/gateway_eval/package/smoke_network_isolation.sh alfred-peer-only:hosted-test
 
 
   pinned-openai-tunnel-native-header:

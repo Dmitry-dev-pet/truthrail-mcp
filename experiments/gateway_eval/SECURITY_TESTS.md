@@ -40,3 +40,23 @@ Likewise the real OpenAI Secure MCP Tunnel and Cloudflare Worker are not
 connected here, and the local fixture issuer has no production key material.
 
 Reference design: [infra-access ADR #471](https://github.com/Dmitry-dev-pet/infra-access/pull/471).
+
+
+### Disposable two-interface Docker network isolation (CI-only)
+
+This second independent network test creates two disjoint **internal-only**
+Docker bridge networks. One unprivileged container runs the SAME pinned
+Agentgateway and Peer Chat processes on two assigned NIC addresses. Owner and
+external gateway listeners each bind only to their own NIC's fixed IPv4
+address. One disposable probe container joins ONLY owner network, another
+ONLY external network. Both permitted local connections must succeed first.
+
+Six attempts then verify that cross-network/other-port requests and direct
+backend TCP access are denied. No TCP port is published to the host, Docker
+socket is not mounted to the application, and root filesystem is read-only.
+No real Cloudflare/ChatGPT tunnel, user token, secret or VPS is used.
+
+**Do not deploy its deliberately no-auth CI config.** This validates
+network topology on a disposable runner, not the exact future production
+Docker Compose networks or Cloudflare VPC service. The separately tested
+two-issuer JWT scopes and routes must BOTH remain enforced in production.
