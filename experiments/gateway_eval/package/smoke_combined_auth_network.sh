@@ -2,8 +2,9 @@
 # HOSTED GITHUB ACTIONS ONLY. This experiment creates ephemeral test JWTs,
 # never invokes any VPS/Cloudflare/OpenAI API or reads a production secret.
 set -Eeuo pipefail
-test "$#" -eq 2
-test "$(printenv GITHUB_ACTIONS 2>/dev/null || true)" = true
+echo "combined_phase=entry"
+test "$#" -eq 2 || { echo "combined_wrong_arity" >&2; exit 1; }
+test "$(printenv GITHUB_ACTIONS 2>/dev/null || true)" = true || { echo "combined_not_actions" >&2; exit 1; }
 base_image="$1"
 test_image="$2"
 name="alfred-combined-auth-ci-$$"
@@ -23,6 +24,7 @@ docker network create --internal --driver bridge \
   --subnet 172.30.143.0/24 "$owner_network" >/dev/null
 docker network create --internal --driver bridge \
   --subnet 172.30.144.0/24 "$external_network" >/dev/null
+echo "combined_phase=networks_ready"
 
 cat > "$tmp/config.yaml" <<'YAML'
 # HOSTED CI ONLY. Ephemeral local issuer. NEVER deploy this config.
@@ -105,6 +107,7 @@ docker run --rm --read-only --cap-drop=ALL \
   "$test_image" >/dev/null 2>&1
 without_config=$?
 set -e
+echo "combined_phase=no_config_exit_code:$without_config"
 test "$without_config" -eq 42
 
 # No host-published port, no Docker socket and no privileged execution.
@@ -121,6 +124,7 @@ docker create --name "$name" \
   "$test_image" >/dev/null
 docker network connect --ip "$external_addr" "$external_network" "$name"
 docker start "$name" >/dev/null
+echo "combined_phase=container_started"
 
 test -z "$(docker port "$name")"
 test "$(docker inspect --format '{{.Config.User}}' "$name")" = "10001:10001"
