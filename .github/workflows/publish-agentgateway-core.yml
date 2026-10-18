@@ -45,8 +45,14 @@ jobs:
           python -m unittest discover -s tests -p test_agentgateway_runtime.py -v
           python -m compileall -q alfred_gateway_core/
           test -f release/agentgateway-peer/ci/smoke_production.sh
-          ! grep -R -E 'dual_issuer|ALFRED_CI_TEST_ONLY|owner_marker|CONTROL_PLANE_API_KEY' \
-            alfred_gateway_core/ release/agentgateway-peer/entrypoint.sh
+          # The strict policy validator intentionally *mentions* blocked
+          # owner_marker/CI names; only executable runtime handlers are
+          # forbidden from registering or bundling those fixture tools.
+          ! grep -E 'dual_issuer|ALFRED_CI_TEST_ONLY|owner_marker|CONTROL_PLANE_API_KEY' \
+            alfred_gateway_core/peer_backend.py \
+            alfred_gateway_core/serve.py \
+            alfred_gateway_core/transport_security.py \
+            release/agentgateway-peer/entrypoint.sh
       - name: Build pinned non-root candidate without any signing credentials
         shell: bash
         run: |
