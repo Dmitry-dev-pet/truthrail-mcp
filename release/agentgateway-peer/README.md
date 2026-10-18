@@ -1,100 +1,113 @@
-# Alfred Agentgateway core v1 — source-only production image candidate
+# Alfred Agentgateway core — strict native owner API key + external JWT scopes
 
-Status: **DRAFT / NOT RELEASED / NOT DEPLOYED**. Draft
-[PR #16](https://github.com/Dmitry-dev-pet/truthrail-mcp/pull/16) is for code
-review. This image is not a public MCP endpoint, an OAuth issuer or an
-operator-approved VPS deployment.
+**18 October 2026 — source/release candidate ONLY, not installed on VPS.**
 
-## What ships
+Owner decision: [infra-access #470](https://github.com/Dmitry-dev-pet/infra-access/issues/470).
+Full detailed architecture: [ALFRED_MCP_UNIFIED_OWNER_AUTH.md](https://github.com/Dmitry-dev-pet/infra-access/blob/main/docs/ALFRED_MCP_UNIFIED_OWNER_AUTH.md).
 
-- Agentgateway v1.6.0 Linux AMD64 binary, **exact** SHA-256
-  `496ed27e6a96b55a9ad7cabe5c2be7172511f44a3cb113e533d22bf93a7f079d`,
-  built on a digest-pinned Python 3.12 base.
-- Private shared-state Python MCP Peer Chat server with these six tools:
-  `chat_create`, `chat_join`, `chat_send`, `chat_wait`,
-  `chat_status`, `chat_close`.
-- Strict Host and Origin checks on the backend. Only loopback plus one or
-  two **exact, operator-configured RFC1918 IP:port** pairs are accepted.
-  `0.0.0.0`, wildcard ports and public IPs are rejected.
-- Nonroot UID/GID 10001, read-only-root compatible entrypoint, no
-  built-in LLM inference, shell executor, Atlas, Cloudflare Worker, key
-  issuer, token or test `owner_marker`.
-- Initial policy admission: each gateway listener must bind a distinct
-  private NIC, use `mode: strict`, verify exact JWT issuer/audience
-  via PUBLIC local JWKS and present explicit MCP tool rules. Backend
-  target URLs must be in the separate operator-owned
-  `approved-targets.json`. Unknown private/public origins and
-  arbitrary command adapters are forbidden.
+## Production topology (not deployed)
 
-## What MUST be mounted before starting
+- **One app container, two processes:** pinned official Agentgateway v1.6.0
+  (download verified by SHA-256 `496ed27e6a96b55a9ad7cabe5c2be7172511f44a3cb113e533d22bf93a7f079d`)
+  and one internal loopback shared Peer Chat MCP server.
+- Native **ChatGPT owner** uses the original private OpenAI Secure MCP Tunnel
+  on `172.30.143.10:8765/mcp` with a distinct file-backed header
+  `X-Alfred-Native-Owner-Key` injected on the final tunnel-client → MCP hop.
+  Gateway policy requires `apiKey.mode: strict`, exactly one
+  `keyHash: sha256:<digest>`, `metadata: {role: owner}`, and only
+  `apiKey.role == "owner"` for owner tools. The raw key is NOT mounted
+  in Agentgateway, GitHub source or image; the OpenAI tunnel runtime key
+  is NOT reused as an application credential. No JWT signer is required
+  for native owner access.
+- **Optional external clients**, disabled in initial owner-only deployment,
+  use an independent private interface `172.30.144.10:8766/mcp`, strict
+  OAuth/JWT issuer and audience, local *PUBLIC* external JWKS and
+  explicit `mcp.tool.name` / `jwt.scopes` rules. Cloudflare must not be
+  able to route to the owner listener or present its owner key.
+- The first backend is bounded, persistent-process Peer Chat with six
+  tools: `chat_create`, `chat_join`, `chat_send`, `chat_wait`,
+  `chat_status`, `chat_close`. A and B use distinct private room tickets,
+  a one-use invitation and `chat_wait` up to 10 seconds. No shell, LLM,
+  arbitrary outbound HTTP, files, Atlas import or GitHub tool is present.
+- Non-root `10001:10001`, read-only-root compatible, no host MCP listener,
+  Docker socket or privileged capabilities; IP and Host policy is exact
+  RFC1918 only. Future targets can be added ONLY through a separately
+  approved, validated config+allowlist change; new executable backends may
+  still require their own reviewed release.
 
-| Container location | Contents / owner |
+## Required operator-owned inputs
+
+| Container input | Required content |
 | --- | --- |
-| `/etc/agentgateway/config.yaml` | Operator-reviewed Agentgateway route and strict JWT policies |
-| `/etc/agentgateway/approved-targets.json` | Separately reviewed exact backend URL inventory |
-| `/run/alfred-auth/owner-jwks.json` | Owner identity's PUBLIC RSA verification keys, never a signer |
-| `/run/alfred-auth/external-jwks.json` | OPTIONAL external issuer's PUBLIC RSA keys, only when its own private network is reviewed |
-| `ALFRED_PEER_TRUSTED_HOSTS` | One exact owner internal IP:8765; optional second external IP:8766 |
+| `/etc/agentgateway/config.yaml` | Strict native owner API-key hash and rule; optional separately isolated external JWT/scopes |
+| `/etc/agentgateway/approved-targets.json` | Versioned, exact internal MCP target inventory |
+| `/run/alfred-auth/external-jwks.json` | PUBLIC verification keys, **only when external JWT ingress is enabled** |
+| `ALFRED_PEER_TRUSTED_HOSTS` | One exact native private listener IP:8765; optional second external IP:8766 |
 
-The JWT **signer/private key and raw owner token MUST be external to the
-Agentgateway image and container**. The private owner token file belongs
-only to the existing `tunnel-client` sidecar through its supported
-`MCP_EXTRA_HEADERS=Authorization: file:/run/secrets/...` feature, or the
-existing ChatGPT connector's reviewed OAuth flow. The OpenAI tunnel
-runtime API key is NOT reused as an application bearer.
+There is **no** `owner-jwks.json` dependency. Production native
+`X-Alfred-Native-Owner-Key` raw value must be created and held only by
+a separately authorized non-root or operator-controlled tunnel-client
+secret file with restrictive ownership/mode. The app receives the SHA-256
+hash only. A configuration with a plaintext key, extra owner roles, multiple
+owner keys, permissive authentication or an external owner assertion is
+rejected before Agentgateway starts.
 
-The operator MUST run
-`python -m alfred_gateway_core.validate_policy <config> <inventory> <owner_public_jwks> <external_public_jwks_or_-> <HostList>`
-before accepting each later atomic route/policy change; runtime validation
-on startup alone does not protect against a malicious future hot-reload.
-Operator-writable policy files are NEVER mounted writable into the MCP
-container.
+The production preflight runs:
 
-**Source of operator release/rollback review**:
-[infra-access #470](https://github.com/Dmitry-dev-pet/infra-access/issues/470),
-[draft PR #471](https://github.com/Dmitry-dev-pet/infra-access/pull/471).
-No direct owner VPS operation is bundled with this repo.
+```text
+python -m alfred_gateway_core.validate_policy \
+  /etc/agentgateway/config.yaml \
+  /etc/agentgateway/approved-targets.json \
+  /run/alfred-auth/external-jwks.json-or-dash \
+  '172.30.143.10:8765[,172.30.144.10:8766]'
+```
 
-## Tests / release gates
+The real binary also validates its own configuration. The operator must
+apply this same strict source policy validation before each future
+hot reload. No automatically trusted hot swap or arbitrary target admission.
 
-The dedicated `verify-agentgateway-peer-core.yml` runs on hosted GitHub
-Actions for PRs; it has `contents: read` only and cannot push an image.
+## Hosted source and release acceptance
 
-1. Test private `Host` validation and removal of all synthetic test tools.
-2. Build the source-pinned, nonroot, **no-issuer** candidate Docker image.
-3. Generate two independent temporary JWT-signing keys **OUTSIDE** the
-   candidate image, mount only PUBLIC JWKS into the server and keep the
-   test bearer strings on runner-private, short-lived files.
-4. Reject permissive authentication and a public owner bind during
-   config preflight.
-5. In one container, verify owner and external **strict JWT** policies
-   with two separate private Docker network interfaces.
-6. Two independent real HTTP MCP clients concurrently exchange three
-   A/B round trips; external clients cannot reach owner TCP or the
-   direct Peer Chat backend. Wrong issuer/audience/expiry/absent tokens
-   must be rejected. Verify no published host ports and record cgroup
-   memory. No actual tunnel or VPS.
-7. Never build a production release containing a CI-only issuer or
-   temporary test credentials.
+The reviewed non-root image is rebuilt on disposable GitHub Actions runners
+with the **same, unbypassed production entrypoint**. The CI test creates a
+random synthetic owner API key and synthetic external RSA signer outside
+the image, places only key SHA-256 and external PUBLIC JWKS into the
+container and tests:
 
-Successful CI is NOT authorization to publish or replace the current VPS
-application. A reviewed release must use an immutable image manifest
-digest, independently provision a revocable owner identity with tested
-rotation, preserve and verify the current tunnel ID/runtime key and
-guarantee same-sidecar or explicitly approved sidecar-recreate rollback.
-The VPS has ~458 MiB total RAM and swap usage; CPU/architecture and
-fresh memory headroom must be checked just before cutover.
+1. No native key, wrong key, and an unrelated `Authorization` bearer
+   without the custom owner header: **denied**. Correct owner header plus
+   unrelated Authorization: **accepted**, six allowed tools.
+2. External strict JWT issuer/audience/expiry and per-tool scopes:
+   negative cases denied on list and call; external cannot create/close
+   owner rooms or use the private native network.
+3. Two HTTP MCP clients in independent isolated Docker networks exchange
+   three concurrent A↔B wait/send round trips with ticket isolation.
+4. Invalid policy/permissive native API key, weak hashed-owner schema,
+   unknown backend and public owner bind fail closed; no host port is
+   published. Image cgroup and non-root/read-only boundaries verified.
+5. Any production signer, real key, HTTPS auth provider, Cloudflare
+   configuration, connected ChatGPT app or VPS mutation is OUTSIDE CI.
+   CI artifacts are ephemeral; do not expose fixture credentials in logs.
 
-## Adding tools later without rebuilding the gateway
+## Explicit remaining production gates
 
-Agentgateway reads its separately approved routing and authorization
-configuration dynamically. New *registered MCP backends* can be attached
-by operator-owned, versioned, exact target policy with no Agentgateway
-image rebuild, provided a suitable backend is already available. A new
-executable backend still needs its own independently reviewed release;
-no arbitrary Python module hot-loading or Docker socket is exposed to
-ChatGPT.
+A green image release/CI is NOT production deployment. The currently installed
+Atlas image and original OpenAI Tunnel remain active.
 
-Atlas is **optional** and can later be added as a read-only target with
-`atlas:read` after source/provenance checks, without rebuilding the
-gateway core.
+Before switching:
+1. Independent exact-image digest + overlay/network + non-root resource
+   operator approval and **working offline rollback** to cached Atlas.
+2. Operator-owned random static native owner key (>=256-bit entropy),
+   protected file and public SHA-256 in reviewed config; prove no
+   ChatGPT/caller **same-name X-header override** through the pinned
+   `tunnel-client v0.0.16`. File-backed extra headers resolve at tunnel
+   config load; rotation needs reviewed sidecar configuration/recreate and
+   actual on-wire old-key rejection tests.
+3. Strict native ChatGPT tools/list, tools/call and real two-Web-session
+   A/B wait behavior with prompt/turn limitations. The tunnel identity is
+   a workspace-level identity; room tickets, not OAuth per-tab claims,
+   distinguish participants. No guarantee of unattended re-polling.
+4. Cloudflare external JWT ingress remains independently blocked, not
+   a reason to disable native tool availability or make a public VPS port.
+
+No newly agent-routable `[infra]` shell/deploy command is created here.
