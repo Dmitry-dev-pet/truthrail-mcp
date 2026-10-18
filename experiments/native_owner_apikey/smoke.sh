@@ -93,7 +93,7 @@ test -z "$(docker port "$name")"
 test "$(docker inspect --format '{{.Config.User}}' "$name")" = "10001:10001"
 # Only nonsecret evidence from the temporary probe reaches logs.
 for attempt in $(seq 1 65); do
-  if docker exec "$name" python -c "import socket; s=socket.create_connection(('172.30.143.10',8765),timeout=.2);s.close()" >/dev/null 2>&1; then
+  if docker exec "$name" python -c "import socket; s=socket.create_connection(('172.30.143.10',8765),timeout=.2);s.close(); x=socket.create_connection(('127.0.0.1',18765),timeout=.2);x.close()" >/dev/null 2>&1; then
     break
   fi
   if [ "$(docker inspect --format '{{.State.Running}}' "$name")" != "true" ]; then
