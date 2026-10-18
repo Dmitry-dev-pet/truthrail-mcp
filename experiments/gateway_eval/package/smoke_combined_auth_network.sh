@@ -125,6 +125,15 @@ docker create --name "$name" \
 docker network connect --ip "$external_addr" "$external_network" "$name"
 docker start "$name" >/dev/null
 echo "combined_phase=container_started"
+# Nonsecret metadata only: fail early if an expected child crashed or OOM'd.
+state="$(docker inspect --format '{{.State.Running}} {{.State.ExitCode}} {{.State.OOMKilled}} {{.HostConfig.Memory}} {{.HostConfig.ReadonlyRootfs}} {{.Config.User}}' "$name")"
+echo "combined_container_state=$state"
+if [ "$(docker inspect --format '{{.State.Running}}' "$name")" != true ]; then
+  docker logs --tail 25 "$name" 2>&1 |
+    grep -E 'Traceback|ImportError|ModuleNotFoundError|SyntaxError|error|Error|invalid_test_|combined_ci_child_exited|blocked_' |
+    tail -10 >&2 || true
+  exit 1
+fi
 
 test -z "$(docker port "$name")"
 test "$(docker inspect --format '{{.Config.User}}' "$name")" = "10001:10001"
