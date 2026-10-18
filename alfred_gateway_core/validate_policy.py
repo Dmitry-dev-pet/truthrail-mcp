@@ -2,8 +2,8 @@
 
 Run before starting gateway AND before every config/policy hot activation.
 This checks fixed trust domains and approved target manifest; Agentgateway
-separately validates its own schema and cryptographic JWT signatures.
-No secret bearer, URL fetching, runtime role header or shell execution.
+separately validates its own schema, SHA-256 owner API keys and external JWT.
+No plaintext bearer, URL fetching, runtime role header or shell execution.
 """
 from __future__ import annotations
 
@@ -24,7 +24,9 @@ PRIVATE = tuple(IPv4Network(x) for x in (
 SCOPE_RULE = re.compile(
     r'^mcp\.tool\.name == "([a-z][a-z0-9_]{1,39})" && "([a-z][a-z0-9:_-]{1,80})" in jwt\.scopes$'
 )
-OWNER_RULE = 'jwt.sub == "alfred-native-owner" && "alfred:owner" in jwt.scopes'
+OWNER_RULE = 'apiKey.role == "owner"'
+OWNER_KEY_HASH = re.compile(r"sha256:[a-f0-9]{64}\Z")
+OWNER_HEADER = "x-alfred-native-owner-key"
 TARGET_NAME = re.compile(r"[a-z][a-z0-9_-]{1,55}\Z")
 
 
@@ -149,46 +151,74 @@ def validate_route(route: Any, *, key: str, host: str,
     require(route["matches"] == [{"path": {"pathPrefix": "/mcp"}}],
             "unsafe-path-match")
     policy = route["policies"]
-    require(type(policy) is dict and set(policy) == {
-        "mcpAuthentication", "mcpAuthorization"
-    }, "missing-auth-policy")
-    auth = policy["mcpAuthentication"]
-    require(type(auth) is dict and
-            set(auth) == {"mode", "issuer", "audiences", "jwks",
-                          "jwtValidationOptions", "resourceMetadata"},
-            "invalid-mcp-authentication")
-    require(auth["mode"] == "strict", "non-strict-mcp-authentication")
-    require(type(auth["issuer"]) is str and
-            auth["issuer"].startswith("https://") and
-            ".invalid" not in auth["issuer"] and
-            ".example" not in auth["issuer"] and
-            len(auth["issuer"]) < 180, "unreviewed-issuer")
-    aud = "http://" + host + "/mcp"
-    require(auth["audiences"] == [aud], "incorrect-JWT-audience")
-    jwks_file = ("/run/alfred-auth/owner-jwks.json" if key == "native-owner"
-                 else "/run/alfred-auth/external-jwks.json")
-    require(auth["jwks"] == {"file": jwks_file}, "unreviewed-JWKS-source")
-    require(auth["jwtValidationOptions"] == {
-        "requiredClaims": ["exp", "nbf", "aud", "sub"]
-    }, "missing-required-JWT-claims")
-    md = auth["resourceMetadata"]
-    require(type(md) is dict and md.get("resource") == aud and
-            md.get("bearerMethodsSupported") == ["header"] and
-            set(md) == {"resource", "scopesSupported", "bearerMethodsSupported"},
-            "unsafe-MCP-resource-metadata")
-    scopes = md["scopesSupported"]
-    require(type(scopes) is list and scopes and len(scopes) <= 48 and
-            all(type(x) is str for x in scopes), "invalid-resource-scopes")
-
-    az = policy["mcpAuthorization"]
-    require(type(az) is dict and set(az) == {"rules"}, "invalid-authorization")
+    require(type(policy) is dict, "invalid-mcp-policy")
+    az = policy.get("mcpAuthorization")
+    require(type(az) is dict and set(az) == {"rules"},
+            "invalid-authorization")
     rules = az["rules"]
     require(type(rules) is list and 1 <= len(rules) <= 64 and
-            all(type(x) is str for x in rules), "invalid-authorization-rules")
+            all(type(x) is str for x in rules),
+            "invalid-authorization-rules")
+
     if key == "native-owner":
-        require(rules == [OWNER_RULE] and scopes == ["alfred:owner"],
-                "owner-policy-exceeds-approved-contract")
+        # Owner authentication is a fixed separate key supplied on the
+        # OpenAI tunnel's local MCP hop. The random secret is held ONLY by
+        # tunnel-client; this configuration stores its SHA-256 digest.
+        require(set(policy) == {"apiKey", "mcpAuthorization"},
+                "owner-must-use-dedicated-strict-api-key")
+        auth = policy["apiKey"]
+        require(type(auth) is dict and set(auth) == {
+            "mode", "location", "keys"
+        }, "unsafe-owner-api-key-fields")
+        require(auth["mode"] == "strict" and auth["location"] == {
+            "header": {"name": OWNER_HEADER}
+        }, "owner-auth-mode-or-header-denied")
+        keys = auth["keys"]
+        require(type(keys) is list and len(keys) == 1,
+                "owner-key-count-must-be-exact")
+        record = keys[0]
+        require(type(record) is dict and
+                set(record) == {"keyHash", "metadata"} and
+                type(record["keyHash"]) is str and
+                OWNER_KEY_HASH.fullmatch(record["keyHash"]) is not None and
+                record["metadata"] == {"role": "owner"},
+                "owner-key-must-be-hashed-with-exact-role")
+        require(rules == [OWNER_RULE],
+                "native-owner-authorization-bypass")
     else:
+        # External clients are DIFFERENT principals on a separate physical
+        # ingress. Preserve JWT issuer/audience and per-tool scopes, never
+        # allow an owner API key or arbitrary external owner elevation.
+        require(set(policy) == {"mcpAuthentication", "mcpAuthorization"},
+                "external-must-use-jwt-and-scope-policy")
+        auth = policy["mcpAuthentication"]
+        require(type(auth) is dict and
+                set(auth) == {"mode", "issuer", "audiences", "jwks",
+                              "jwtValidationOptions", "resourceMetadata"},
+                "invalid-mcp-authentication")
+        require(auth["mode"] == "strict", "non-strict-mcp-authentication")
+        require(type(auth["issuer"]) is str and
+                auth["issuer"].startswith("https://") and
+                ".invalid" not in auth["issuer"] and
+                ".example" not in auth["issuer"] and
+                len(auth["issuer"]) < 180, "unreviewed-issuer")
+        aud = "http://" + host + "/mcp"
+        require(auth["audiences"] == [aud], "incorrect-JWT-audience")
+        require(auth["jwks"] == {"file": "/run/alfred-auth/external-jwks.json"},
+                "unreviewed-JWKS-source")
+        require(auth["jwtValidationOptions"] == {
+            "requiredClaims": ["exp", "nbf", "aud", "sub"]
+        }, "missing-required-JWT-claims")
+        md = auth["resourceMetadata"]
+        require(type(md) is dict and md.get("resource") == aud and
+                md.get("bearerMethodsSupported") == ["header"] and
+                set(md) == {
+                    "resource", "scopesSupported", "bearerMethodsSupported"
+                }, "unsafe-MCP-resource-metadata")
+        scopes = md["scopesSupported"]
+        require(type(scopes) is list and scopes and len(scopes) <= 48 and
+                all(type(x) is str for x in scopes),
+                "invalid-resource-scopes")
         found = set()
         for expr in rules:
             match = SCOPE_RULE.fullmatch(expr)
@@ -196,10 +226,12 @@ def validate_route(route: Any, *, key: str, host: str,
             tool, scope = match.groups()
             require(not scope.startswith(("infra:", "alfred:")) and
                     ":" in scope and tool not in found and
-                    scope in scopes, "scope-escalation-or-tool-duplicate")
+                    scope in scopes,
+                    "scope-escalation-or-tool-duplicate")
             found.add(tool)
         require("chat_create" not in found and "chat_close" not in found and
-                "owner_marker" not in found, "external-owner-tool-exposure")
+                "owner_marker" not in found,
+                "external-owner-tool-exposure")
 
     backend = route["backends"]
     require(type(backend) is list and len(backend) == 1 and
@@ -226,7 +258,6 @@ def validate_route(route: Any, *, key: str, host: str,
 
 def validate(config: dict, *, allowed_hosts: tuple[str, ...],
              target_inventory: dict[str, str],
-             owner_public_jwks: Path,
              external_public_jwks: Path | None) -> None:
     require(set(config) == {"config", "gateways", "routes"},
             "unexpected-root-config-key")
@@ -265,29 +296,30 @@ def validate(config: dict, *, allowed_hosts: tuple[str, ...],
                        allowed_targets=target_inventory)
         seen.add(key)
     require(seen == set(gateways), "missing-trust-domain")
-    validate_public_jwks(owner_public_jwks)
     if "cloudflare-external" in gateways:
         require(external_public_jwks is not None,
                 "missing-external-public-jwks")
         validate_public_jwks(external_public_jwks)
 
 
-def check_files(config: Path, inventory: Path, owner_jwks: Path,
+def check_files(config: Path, inventory: Path,
                 external_jwks: Path | None, hosts: str) -> None:
     validate(
         load_doc(config), allowed_hosts=trusted_host_headers(hosts),
         target_inventory=approved_targets(inventory),
-        owner_public_jwks=owner_jwks, external_public_jwks=external_jwks
+        external_public_jwks=external_jwks
     )
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 6:
-        raise SystemExit("usage: validate_policy.py config.yaml targets.json owner-jwks.json optional-external-jwks.json HostList")
+    if len(sys.argv) != 5:
+        raise SystemExit(
+            "usage: validate_policy.py config.yaml targets.json external-jwks-or-dash HostList"
+        )
     try:
         check_files(
-            Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]),
-            None if sys.argv[4] == "-" else Path(sys.argv[4]), sys.argv[5],
+            Path(sys.argv[1]), Path(sys.argv[2]),
+            None if sys.argv[3] == "-" else Path(sys.argv[3]), sys.argv[4],
         )
     except (InvalidPolicy, ValueError, yaml.YAMLError) as exc:
         # Error type/category only, never echo content from a potentially

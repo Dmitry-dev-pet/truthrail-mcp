@@ -17,7 +17,7 @@ trap cleanup EXIT
 python release/agentgateway-peer/ci/issue_fake_tokens.py "$tmp/private"
 mkdir -m 0755 "$tmp/public" "$tmp/config"
 mkdir -m 0700 "$tmp/session"
-cp "$tmp/private/"*jwks.json "$tmp/public/"
+cp "$tmp/private/external-jwks.json" "$tmp/public/external-jwks.json"
 chmod 0644 "$tmp/public/"*.json
 cat > "$tmp/config/approved-targets.json" <<'JSON'
 {"schema":1,"targets":[{"name":"peer-chat","host":"http://127.0.0.1:18765/mcp"}]}
@@ -40,21 +40,18 @@ routes:
   - path:
       pathPrefix: /mcp
   policies:
-    mcpAuthentication:
+    apiKey:
       mode: strict
-      issuer: https://owner-ci.alfred.test
-      audiences: ["http://172.30.143.10:8765/mcp"]
-      jwks:
-        file: /run/alfred-auth/owner-jwks.json
-      jwtValidationOptions:
-        requiredClaims: [exp, nbf, aud, sub]
-      resourceMetadata:
-        resource: http://172.30.143.10:8765/mcp
-        scopesSupported: [alfred:owner]
-        bearerMethodsSupported: [header]
+      location:
+        header:
+          name: x-alfred-native-owner-key
+      keys:
+      - keyHash: sha256:__OWNER_KEY_SHA256__
+        metadata:
+          role: owner
     mcpAuthorization:
       rules:
-      - 'jwt.sub == "alfred-native-owner" && "alfred:owner" in jwt.scopes'
+      - 'apiKey.role == "owner"'
   backends:
   - mcp:
       targets:
@@ -92,22 +89,24 @@ routes:
         mcp:
           host: http://127.0.0.1:18765/mcp
 YAML
+# Only the public digest is placed in gateway config; raw secret is client-only.
+sed -i "s/__OWNER_KEY_SHA256__/$(cat "$tmp/private/owner-key.sha256")/" "$tmp/config/config.yaml"
 
 export ALFRED_PEER_TRUSTED_HOSTS=172.30.143.10:8765,172.30.144.10:8766
 python -m alfred_gateway_core.validate_policy "$tmp/config/config.yaml" \
-  "$tmp/config/approved-targets.json" "$tmp/public/owner-jwks.json" \
+  "$tmp/config/approved-targets.json" \
   "$tmp/public/external-jwks.json" "$ALFRED_PEER_TRUSTED_HOSTS"
 cp "$tmp/config/config.yaml" "$tmp/permissive.yaml"
 sed -i 's/mode: strict/mode: permissive/g' "$tmp/permissive.yaml"
 if python -m alfred_gateway_core.validate_policy "$tmp/permissive.yaml" \
-  "$tmp/config/approved-targets.json" "$tmp/public/owner-jwks.json" \
+  "$tmp/config/approved-targets.json" \
   "$tmp/public/external-jwks.json" "$ALFRED_PEER_TRUSTED_HOSTS" >/dev/null 2>&1; then
   echo "CRITICAL:unprotected_route_accepted" >&2; exit 1
 fi
 cp "$tmp/config/config.yaml" "$tmp/public-ip.yaml"
 sed -i 's/bindAddress: 172.30.143.10/bindAddress: 0.0.0.0/' "$tmp/public-ip.yaml"
 if python -m alfred_gateway_core.validate_policy "$tmp/public-ip.yaml" \
-  "$tmp/config/approved-targets.json" "$tmp/public/owner-jwks.json" \
+  "$tmp/config/approved-targets.json" \
   "$tmp/public/external-jwks.json" "$ALFRED_PEER_TRUSTED_HOSTS" >/dev/null 2>&1; then
   echo "CRITICAL:public_owner_listener_accepted" >&2; exit 1
 fi
@@ -152,8 +151,10 @@ for _ in $(seq 1 65); do
   sleep .2
 done
 
-# App only has PUBLIC RSA JWKs. All signed credentials stay OUTSIDE the image.
+# App has only an external PUBLIC JWKS and native owner keyHash in config.
+# Raw owner key and signed external JWTs stay outside the server image.
 docker exec "$name" test ! -e /run/alfred-auth/owner.jwt
+docker exec "$name" test ! -e /run/alfred-auth/owner.key
 docker exec "$name" test ! -e /tmp/ephemeral_tokens
 docker exec "$name" test ! -e /app/dual_issuer.py
 id_u="$(id -u)"
@@ -192,4 +193,4 @@ usage="$(docker stats --no-stream --format '{{.MemUsage}}' "$name")"
 peak="$(docker exec "$name" cat /sys/fs/cgroup/memory.peak)"
 case "$peak" in *[!0-9]*|'') echo "unavailable_cgroup_peak" >&2; exit 1;; esac
 test "$peak" -lt 184549376
-printf 'prod_candidate_ci_peak_bytes=%s; cgroup=%s; cap=176MiB; built_in_signer=false; host_ports=0; VPS_mutated=false\n' "$peak" "$usage"
+printf 'prod_candidate_ci_peak_bytes=%s; cgroup=%s; cap=176MiB; owner_auth=strict_api_key; external_auth=strict_jwt_scopes; built_in_signer=false; host_ports=0; VPS_mutated=false\n' "$peak" "$usage"

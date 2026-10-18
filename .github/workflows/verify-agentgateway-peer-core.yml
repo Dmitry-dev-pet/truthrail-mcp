@@ -47,7 +47,7 @@ jobs:
             -t alfred-gateway-core:source-ci .
           docker image inspect alfred-gateway-core:source-ci \
             --format '{{index .Config.Labels "alfred.release_role"}} {{.Config.User}}' \
-            | grep -qx 'agentgateway-peer-core-no-issuer 10001:10001'
+            | grep -qx 'agentgateway-peer-core-native-owner-key 10001:10001'
       - name: Single Docker image, two JWT issuers outside image, two isolated client networks
         shell: bash
         run: |

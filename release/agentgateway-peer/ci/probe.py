@@ -1,7 +1,7 @@
 """Independent HTTP MCP clients on segregated Docker networks.
 
-Use only with temporary CI-signed fixture JWTs and a single operator-like
-candidate built WITHOUT any token/issuer in the production image.
+Use only with a temporary native owner API key and external CI-signed JWTs.
+The real production entrypoint must be exercised, not bypassed.
 """
 from __future__ import annotations
 
@@ -27,8 +27,7 @@ B_SET = {"chat_join", "chat_send", "chat_wait", "chat_status"}
 
 def local_token(name: str) -> str:
     assert name in {
-        "owner.jwt", "owner_bad_aud.jwt", "owner_expired.jwt",
-        "external_writer.jwt", "external_reader.jwt",
+        "owner.key", "external_writer.jwt", "external_reader.jwt",
         "external_claims_owner.jwt", "external_expired.jwt", "external_bad_aud.jwt"
     }
     return (TOKENS / name).read_text(encoding="ascii").strip()
@@ -78,12 +77,16 @@ async def denied(client, name, arguments=None):
     raise AssertionError("forbidden-tool-call-success")
 
 
-async def expected_auth_refusal(url, credential):
+async def expected_auth_refusal(url, credential, *, owner_custom=False):
     try:
+        if credential is None:
+            headers = {}
+        elif owner_custom:
+            headers = {"X-Alfred-Native-Owner-Key": credential}
+        else:
+            headers = {"Authorization": "Bearer " + credential}
         async with httpx2.AsyncClient(
-            headers={} if credential is None
-            else {"Authorization": "Bearer " + credential},
-            timeout=5.0, trust_env=False,
+            headers=headers, timeout=5.0, trust_env=False,
         ) as transport:
             async with Client(streamable_http_client(url, http_client=transport),
                               raise_exceptions=True) as cl:
@@ -130,12 +133,17 @@ def net_check(role):
 async def actor(role):
     net_check(role)
     if role == "owner":
-        native_url, credential, expected = OWNER_URL, local_token("owner.jwt"), A_SET
+        native_url, credential, expected = OWNER_URL, local_token("owner.key"), A_SET
+        headers = {
+            "X-Alfred-Native-Owner-Key": credential,
+            "Authorization": "Bearer unrelated-connector-authentication",
+        }
     else:
         native_url, credential, expected = EXTERNAL_URL, local_token("external_writer.jwt"), B_SET
+        headers = {"Authorization": "Bearer " + credential}
 
     async with httpx2.AsyncClient(
-        headers={"Authorization": "Bearer " + credential},
+        headers=headers,
         timeout=httpx2.Timeout(10.0, read=20.0),
         trust_env=False,
     ) as http:
@@ -147,9 +155,11 @@ async def actor(role):
                 full_name(names, tool)
             if role == "owner":
                 await expected_auth_refusal(OWNER_URL, local_token("external_writer.jwt"))
-                await expected_auth_refusal(OWNER_URL, local_token("owner_bad_aud.jwt"))
-                await expected_auth_refusal(OWNER_URL, local_token("owner_expired.jwt"))
+                await expected_auth_refusal(OWNER_URL, "wrong-owner-key", owner_custom=True)
                 await expected_auth_refusal(OWNER_URL, None)
+                await expected_auth_refusal(
+                    OWNER_URL, "forged-owner-with-same-header", owner_custom=True
+                )
                 result = unpack(await c.call_tool(full_name(names, "chat_create"), {}))
                 publish("room.json", result)
                 await load("joined.json")
@@ -176,12 +186,32 @@ async def actor(role):
                 assert result2["status"] == "closed"
                 publish("closed.json", {"ok": True})
             else:
-                await expected_auth_refusal(EXTERNAL_URL, local_token("owner.jwt"))
+                await expected_auth_refusal(
+                    EXTERNAL_URL, local_token("owner.key"), owner_custom=True
+                )
                 await expected_auth_refusal(EXTERNAL_URL, local_token("external_bad_aud.jwt"))
                 await expected_auth_refusal(EXTERNAL_URL, local_token("external_expired.jwt"))
                 await expected_auth_refusal(EXTERNAL_URL, None)
                 await denied(c, "peer-chat_chat_create")
                 await denied(c, "peer-chat_chat_close")
+                # Verify a second external JWT has its OWN, strictly smaller
+                # tool scope. An external token claiming alfred:owner remains
+                # external: never allow it to inherit native owner tools.
+                for candidate in ("external_reader.jwt", "external_claims_owner.jwt"):
+                    async with httpx2.AsyncClient(
+                        headers={"Authorization": "Bearer " + local_token(candidate)},
+                        timeout=httpx2.Timeout(8.0, read=20.0),
+                        trust_env=False,
+                    ) as limited_http:
+                        async with Client(streamable_http_client(
+                            EXTERNAL_URL, http_client=limited_http,
+                        ), raise_exceptions=True) as limited:
+                            visible = [t.name for t in (await limited.list_tools()).tools]
+                            assert len(visible) == 1
+                            assert full_name(visible, "chat_status")
+                            await denied(limited, "peer-chat_chat_send")
+                            await denied(limited, "peer-chat_chat_create")
+                            await denied(limited, "peer-chat_chat_close")
                 room = await load("room.json")
                 joined = unpack(await c.call_tool(full_name(names, "chat_join"), {
                     "room_id": room["room_id"], "invitation": room["b_invite"],
@@ -209,7 +239,7 @@ async def actor(role):
                     await load("owner_round_" + str(i))
                 await load("closed.json")
     print(json.dumps({"actor": role, "scoped_tools": len(expected),
-                      "jwt_refusals": 4, "network_denials": 3, "round_trips": 3,
+                      "auth_refusals": 4, "network_denials": 3, "round_trips": 3,
                       "native_tunnel_or_vps_accessed": False}))
 
 

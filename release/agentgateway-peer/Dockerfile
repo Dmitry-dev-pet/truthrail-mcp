@@ -1,4 +1,4 @@
-# FIRST core-release candidate ONLY; not authorized for VPS deployment.
+# NEXT core-release candidate ONLY; not authorized for VPS deployment.
 # No credentials, JWT issuer/private key, CI identity fixtures, Atlas or Docker socket.
 # Official amd64 Agentgateway 1.6.0 binary pinned by full SHA-256.
 FROM python:3.12-slim-bookworm@sha256:34386ef0cb081344d7ec1c103ba398e6e9f64e9ab3a1509accc92a4e24a07258
@@ -45,12 +45,13 @@ RUN chmod 0555 /usr/local/bin/alfred-peer-start \
  && python -m compileall -q /app/alfred_gateway_core
 LABEL org.opencontainers.image.source="https://github.com/Dmitry-dev-pet/truthrail-mcp" \
       org.opencontainers.image.revision="$SOURCE_SHA" \
-      alfred.release_role="agentgateway-peer-core-no-issuer" \
+      alfred.release_role="agentgateway-peer-core-native-owner-key" \
       alfred.gateway_binary="agentgateway-v1.6.0" \
       alfred.gateway_binary_sha256="496ed27e6a96b55a9ad7cabe5c2be7172511f44a3cb113e533d22bf93a7f079d"
 USER 10001:10001
 EXPOSE 8765 8766
-# No stock HTTP HEALTHCHECK: both MCP listeners require JWT, and the
+# No stock HTTP HEALTHCHECK: native owner requires a strict API key and
+# optional external listeners require strict JWT; the
 # actual owner-only bind IP is configured by an independently reviewed operator.
 # Deployment health must verify the real authenticated tools/list and rollback.
 ENTRYPOINT ["/usr/local/bin/alfred-peer-start"]
