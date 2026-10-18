@@ -25,7 +25,7 @@ SCOPE_RULE = re.compile(
     r'^mcp\.tool\.name == "([a-z][a-z0-9_]{1,39})" && "([a-z][a-z0-9:_-]{1,80})" in jwt\.scopes$'
 )
 OWNER_RULE = 'apiKey.role == "owner"'
-OWNER_KEY_HASH = re.compile(r"sha256:[a-f0-9]{64}\\Z")
+OWNER_KEY_HASH = re.compile(r"sha256:[a-f0-9]{64}\Z")
 OWNER_HEADER = "x-alfred-native-owner-key"
 TARGET_NAME = re.compile(r"[a-z][a-z0-9_-]{1,55}\Z")
 
